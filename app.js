@@ -1,0 +1,932 @@
+const RECORDS_KEY = "mood-tracker-records-v2";
+const CUSTOM_METRICS_KEY = "mood-tracker-custom-metrics-v2";
+const VISIBLE_METRICS_KEY = "mood-tracker-visible-metrics-v2";
+
+const DEFAULT_METRICS = [
+  { id: "fatigue", label: "しんどさ", description: "心身のつらさ。高いほどきつい。" },
+  { id: "interest", label: "関心", description: "物事に向く気持ち。高いほど向きやすい。" },
+  { id: "heaviness", label: "気分の重さ", description: "沈みや圧迫感。高いほど重い。" }
+];
+
+const TAG_PRESETS = ["通院", "仕事", "休み", "人と会った", "雨", "睡眠不足", "外出", "家にいた"];
+
+const PRESET_METRICS = [
+  { label: "不安", description: "高いほど不安が強い。" },
+  { label: "焦り", description: "高いほど焦りが強い。" },
+  { label: "達成感", description: "高いほど達成感がある。" },
+  { label: "眠気", description: "高いほど眠気が強い。" },
+  { label: "孤独感", description: "高いほど孤独感が強い。" }
+];
+
+const SERIES_COLORS = ["#b42318", "#1d4ed8", "#15803d", "#7e22ce", "#c2410c", "#0f766e", "#be185d", "#a16207", "#4338ca", "#0369a1"];
+const SERIES_STYLES = [[], [8, 4], [2, 3], [10, 3, 2, 3], [12, 5], [1, 4], [6, 2, 1, 2], [3, 2], [9, 3], [4, 4, 1, 4]];
+
+let state = {
+  records: [],
+  customMetrics: [],
+  visibleMetricIds: DEFAULT_METRICS.map(m => m.id),
+  currentDate: todayString(),
+  currentScores: {},
+  wentOut: false,
+  timeBucket: "morning",
+  tags: [],
+  cbt: { situation: "", automaticThought: "", adaptiveThought: "" },
+  memo: "",
+  activeTab: "input",
+  quickMode: false,
+  chart: null,
+  saveNotice: "",
+  saveNoticeTimer: null
+};
+
+function announceToScreenReader(message) {
+  const el = document.getElementById("screenReaderStatus");
+  if (!el) return;
+  el.textContent = "";
+  window.setTimeout(() => { el.textContent = message; }, 10);
+}
+
+function todayString() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+function safeParse(key, fallback) {
+  try {
+    const raw = localStorage.getItem(key);
+    if (!raw) return fallback;
+    const parsed = JSON.parse(raw);
+    return parsed ?? fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function clampScore(value) {
+  const n = Number(value);
+  if (Number.isNaN(n)) return 0;
+  return Math.max(0, Math.min(100, Math.round(n)));
+}
+
+function parseTags(text) {
+  return text.split(",").map(s => s.trim()).filter(Boolean);
+}
+
+function slugify(text) {
+  const basic = text.trim().toLowerCase().replaceAll(" ", "-");
+  const safe = Array.from(basic).filter((ch) => {
+    const code = ch.charCodeAt(0);
+    return (
+      (code >= 48 && code <= 57) ||
+      (code >= 97 && code <= 122) ||
+      ch === "-" ||
+      ((code >= 12352 && code <= 12447) || (code >= 12448 && code <= 12543) || (code >= 19968 && code <= 40959))
+    );
+  }).join("");
+  return safe || `metric-${Date.now()}`;
+}
+
+function formatDateLabel(date) {
+  const d = new Date(date + "T00:00:00");
+  return Number.isNaN(d.getTime()) ? date : `${d.getMonth() + 1}/${d.getDate()}`;
+}
+
+function weekdayJa(dateStr) {
+  const days = ["日", "月", "火", "水", "木", "金", "土"];
+  const d = new Date(dateStr + "T00:00:00");
+  return Number.isNaN(d.getTime()) ? "不明" : days[d.getDay()];
+}
+
+function getAllMetrics() {
+  return [...DEFAULT_METRICS, ...state.customMetrics];
+}
+
+function buildDefaultScores() {
+  const all = getAllMetrics();
+  const obj = {};
+  all.forEach(metric => { obj[metric.id] = 50; });
+  return obj;
+}
+
+function normalizeRecord(record) {
+  return {
+    date: record?.date || todayString(),
+    scores: { ...buildDefaultScores(), ...(record?.scores || {}) },
+    wentOut: Boolean(record?.wentOut),
+    timeBucket: record?.timeBucket || "morning",
+    tags: Array.isArray(record?.tags) ? record.tags : [],
+    cbt: {
+      situation: record?.cbt?.situation || "",
+      automaticThought: record?.cbt?.automaticThought || "",
+      adaptiveThought: record?.cbt?.adaptiveThought || ""
+    },
+    memo: record?.memo || ""
+  };
+}
+
+function loadState() {
+  state.customMetrics = safeParse(CUSTOM_METRICS_KEY, []);
+  state.records = safeParse(RECORDS_KEY, []).map(normalizeRecord);
+  const savedVisible = safeParse(VISIBLE_METRICS_KEY, null);
+  state.visibleMetricIds = Array.isArray(savedVisible)
+    ? savedVisible
+    : [...DEFAULT_METRICS.map(m => m.id), ...state.customMetrics.map(m => m.id)];
+  resetForm(false);
+}
+
+function savePersistentState() {
+  localStorage.setItem(RECORDS_KEY, JSON.stringify(state.records));
+  localStorage.setItem(CUSTOM_METRICS_KEY, JSON.stringify(state.customMetrics));
+  localStorage.setItem(VISIBLE_METRICS_KEY, JSON.stringify(state.visibleMetricIds));
+}
+
+function resetForm(setDate = true) {
+  state.currentDate = setDate ? todayString() : state.currentDate;
+  state.currentScores = buildDefaultScores();
+  state.wentOut = false;
+  state.timeBucket = "morning";
+  state.tags = [];
+  state.cbt = { situation: "", automaticThought: "", adaptiveThought: "" };
+  state.memo = "";
+}
+
+function selectedRecord() {
+  return state.records.find(r => r.date === state.currentDate) || null;
+}
+
+function currentRecordIndex() {
+  return state.records.findIndex(r => r.date === state.currentDate);
+}
+
+function averageFor(records, metricId) {
+  if (!records.length) return "-";
+  return Math.round(records.reduce((sum, r) => sum + Number(r.scores?.[metricId] || 0), 0) / records.length);
+}
+
+function escapeHtml(text) {
+  return String(text)
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;");
+}
+
+function triggerSaveNotice(message) {
+  state.saveNotice = message;
+  const saveBtn = document.getElementById("saveBtn");
+  if (saveBtn) {
+    saveBtn.classList.add("is-saved");
+    saveBtn.textContent = message;
+  }
+  const notice = document.getElementById("saveNotice");
+  if (notice) {
+    notice.textContent = message;
+    notice.classList.add("show");
+  }
+  announceToScreenReader(message);
+  if (state.saveNoticeTimer) clearTimeout(state.saveNoticeTimer);
+  state.saveNoticeTimer = setTimeout(() => {
+    state.saveNotice = "";
+    const currentBtn = document.getElementById("saveBtn");
+    if (currentBtn) {
+      currentBtn.classList.remove("is-saved");
+      currentBtn.textContent = selectedRecord() ? "この日付を更新する" : "この日付で保存する";
+    }
+    const currentNotice = document.getElementById("saveNotice");
+    if (currentNotice) {
+      currentNotice.classList.remove("show");
+      currentNotice.textContent = "";
+    }
+  }, 1400);
+}
+
+function saveCurrentRecord() {
+  const record = {
+    date: state.currentDate,
+    scores: { ...state.currentScores },
+    wentOut: !!state.wentOut,
+    timeBucket: state.timeBucket,
+    tags: [...state.tags],
+    cbt: { ...state.cbt },
+    memo: state.memo
+  };
+  const idx = currentRecordIndex();
+  if (idx >= 0) state.records[idx] = record;
+  else state.records.push(record);
+  state.records = state.records.map(normalizeRecord).sort((a, b) => a.date.localeCompare(b.date));
+  savePersistentState();
+  triggerSaveNotice(idx >= 0 ? "更新しました" : "保存しました");
+  renderAll();
+}
+
+function loadRecordIntoForm(record) {
+  const normalized = normalizeRecord(record);
+  state.currentDate = normalized.date;
+  state.currentScores = { ...buildDefaultScores(), ...normalized.scores };
+  state.wentOut = normalized.wentOut;
+  state.timeBucket = normalized.timeBucket;
+  state.tags = [...normalized.tags];
+  state.cbt = { ...normalized.cbt };
+  state.memo = normalized.memo;
+  state.activeTab = "input";
+  renderAll();
+  window.scrollTo({ top: 0, behavior: "smooth" });
+}
+
+function deleteRecord(date) {
+  state.records = state.records.filter(r => r.date !== date);
+  savePersistentState();
+  if (state.currentDate === date) resetForm();
+  renderAll();
+}
+
+function addCustomMetric(label, description) {
+  const trimmed = (label || "").trim();
+  if (!trimmed) return;
+  const id = `${slugify(trimmed)}-${Date.now().toString().slice(-4)}`;
+  const metric = { id, label: trimmed, description: (description || "").trim() || `${trimmed}の強さ。高いほど強い。` };
+  state.customMetrics.push(metric);
+  state.visibleMetricIds.push(id);
+  state.currentScores[id] = 50;
+  state.records = state.records.map(r => ({ ...r, scores: { ...r.scores, [id]: r.scores?.[id] ?? 50 } }));
+  savePersistentState();
+  renderAll();
+}
+
+function removeCustomMetric(metricId) {
+  state.customMetrics = state.customMetrics.filter(m => m.id !== metricId);
+  state.visibleMetricIds = state.visibleMetricIds.filter(id => id !== metricId);
+  delete state.currentScores[metricId];
+  state.records = state.records.map(r => {
+    const nextScores = { ...r.scores };
+    delete nextScores[metricId];
+    return { ...r, scores: nextScores };
+  });
+  savePersistentState();
+  renderAll();
+}
+
+function toggleMetricVisible(metricId) {
+  if (state.visibleMetricIds.includes(metricId)) {
+    state.visibleMetricIds = state.visibleMetricIds.filter(id => id !== metricId);
+  } else {
+    state.visibleMetricIds.push(metricId);
+  }
+  savePersistentState();
+  renderMetricToggleWrap();
+  if (state.activeTab === "graph") {
+    renderChart();
+    renderChartSummary();
+  }
+}
+
+function downloadCsv() {
+  const metrics = getAllMetrics();
+  const header = ["date", ...metrics.map(m => m.label), "went_out_30min", "time_bucket", "tags", "situation", "automatic_thought", "adaptive_thought", "memo"];
+  const escapeCsv = value => '"' + String(value ?? "").replace(/"/g, '""') + '"';
+  const lines = [header.join(",")].concat(
+    state.records.map(row => [
+      row.date,
+      ...metrics.map(m => row.scores?.[m.id] ?? ""),
+      row.wentOut ? "true" : "false",
+      row.timeBucket || "morning",
+      (row.tags || []).join("|"),
+      row.cbt?.situation || "",
+      row.cbt?.automaticThought || "",
+      row.cbt?.adaptiveThought || "",
+      row.memo || ""
+    ].map(escapeCsv).join(","))
+  );
+  const blob = new Blob([lines.join("\n")], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `mood-tracker-${todayString()}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+function exportJson() {
+  const payload = {
+    exportedAt: new Date().toISOString(),
+    records: state.records,
+    customMetrics: state.customMetrics,
+    visibleMetricIds: state.visibleMetricIds
+  };
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `mood-tracker-${todayString()}.json`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+function importJson(file) {
+  const reader = new FileReader();
+  reader.onload = () => {
+    try {
+      const parsed = JSON.parse(reader.result);
+      if (!Array.isArray(parsed.records)) throw new Error("invalid");
+      state.customMetrics = Array.isArray(parsed.customMetrics) ? parsed.customMetrics : [];
+      state.records = parsed.records.map(normalizeRecord);
+      state.visibleMetricIds = Array.isArray(parsed.visibleMetricIds)
+        ? parsed.visibleMetricIds
+        : [...DEFAULT_METRICS.map(m => m.id), ...state.customMetrics.map(m => m.id)];
+      savePersistentState();
+      resetForm();
+      renderAll();
+      triggerSaveNotice("JSONを読み込みました");
+    } catch {
+      triggerSaveNotice("JSONの読み込みに失敗しました");
+    }
+  };
+  reader.readAsText(file);
+}
+
+function renderStats() {
+  const grid = document.getElementById("statsGrid");
+  const recent7 = [...state.records].sort((a, b) => a.date.localeCompare(b.date)).slice(-7);
+  const stats = [
+    ["直近7日 しんどさ平均", averageFor(recent7, "fatigue"), "高いほどきつい"],
+    ["直近7日 関心平均", averageFor(recent7, "interest"), "高いほど向きやすい"],
+    ["直近7日 気分の重さ平均", averageFor(recent7, "heaviness"), "高いほど重い"],
+    ["直近7日 外出日数", recent7.length ? recent7.filter(r => r.wentOut).length : "-", "30分以上外出した日"]
+  ];
+  grid.innerHTML = stats.map(([title, value, sub]) => `
+    <div class="card">
+      <div class="card-content">
+        <div class="stat-title">${title}</div>
+        <div class="stat-value">${value}</div>
+        <div class="stat-sub">${sub}</div>
+      </div>
+    </div>
+  `).join("");
+}
+
+function createMetricCard(metric) {
+  const value = state.currentScores[metric.id] ?? 50;
+  const card = document.createElement("div");
+  card.className = "card score-card";
+  card.innerHTML = `
+    <div class="card-content">
+      <div class="score-header">
+        <div>
+          <p class="score-title" id="label-${metric.id}">${metric.label}</p>
+          <p class="score-description" id="desc-${metric.id}">${metric.description}</p>
+        </div>
+        <input class="input score-number-input" aria-labelledby="label-${metric.id}" aria-describedby="desc-${metric.id}" type="number" min="0" max="100" step="1" inputmode="numeric" value="${value}" />
+      </div>
+      <div class="score-body">
+        <input class="score-range" aria-labelledby="label-${metric.id}" aria-describedby="desc-${metric.id}" type="range" min="0" max="100" step="1" value="${value}" />
+        <div class="score-buttons-grid"></div>
+      </div>
+    </div>
+  `;
+  const numInput = card.querySelector(".score-number-input");
+  const range = card.querySelector(".score-range");
+  const buttonWrap = card.querySelector(".score-buttons-grid");
+
+  [-20, -10, -1, 0, 1, 10, 20].forEach((diff) => {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = `btn ${diff === 0 ? "btn-secondary" : "btn-outline"} mini-btn`;
+    btn.textContent = diff === 0 ? "50" : diff > 0 ? `+${diff}` : String(diff);
+    btn.addEventListener("click", () => {
+      const next = diff === 0 ? 50 : clampScore((state.currentScores[metric.id] ?? 50) + diff);
+      state.currentScores[metric.id] = next;
+      numInput.value = next;
+      range.value = next;
+    });
+    buttonWrap.appendChild(btn);
+  });
+
+  let rafId = null;
+  range.addEventListener("input", (e) => {
+    const next = clampScore(e.target.value);
+    numInput.value = next;
+    state.currentScores[metric.id] = next;
+    if (rafId) cancelAnimationFrame(rafId);
+    rafId = requestAnimationFrame(() => {});
+  });
+
+  numInput.addEventListener("input", (e) => {
+    const next = clampScore(e.target.value);
+    state.currentScores[metric.id] = next;
+    range.value = next;
+  });
+
+  return card;
+}
+
+function renderScoreGrid() {
+  const grid = document.getElementById("scoreGrid");
+  grid.innerHTML = "";
+  getAllMetrics().forEach(metric => grid.appendChild(createMetricCard(metric)));
+}
+
+function renderTopForm() {
+  const dateEl = document.getElementById("recordDate");
+  const wentOutBtn = document.getElementById("wentOutBtn");
+  const quickBtn = document.getElementById("quickModeBtn");
+  const saveBtn = document.getElementById("saveBtn");
+  const timeBucketEl = document.getElementById("recordTimeBucket");
+  const tagsEl = document.getElementById("recordTags");
+  const contextCard = document.getElementById("contextCard");
+  const cbtFields = document.getElementById("cbtFields");
+
+  dateEl.value = state.currentDate;
+  if (timeBucketEl) timeBucketEl.value = state.timeBucket || "morning";
+  if (tagsEl) tagsEl.value = state.tags.join(", ");
+
+  dateEl.onchange = (e) => {
+    state.currentDate = e.target.value;
+    const found = selectedRecord();
+    if (found) loadRecordIntoForm(found);
+    else {
+      state.currentScores = buildDefaultScores();
+      state.wentOut = false;
+      state.timeBucket = "morning";
+      state.tags = [];
+      state.cbt = { situation: "", automaticThought: "", adaptiveThought: "" };
+      state.memo = "";
+      renderAll();
+    }
+  };
+
+  wentOutBtn.textContent = state.wentOut ? "30分以上外出した" : "外出なし";
+  wentOutBtn.className = `btn ${state.wentOut ? "btn-default" : "btn-outline"}`;
+  wentOutBtn.setAttribute("aria-pressed", state.wentOut ? "true" : "false");
+  wentOutBtn.onclick = () => {
+    state.wentOut = !state.wentOut;
+    renderTopForm();
+    announceToScreenReader(state.wentOut ? "30分以上外出したに設定しました" : "外出なしに設定しました");
+  };
+
+  quickBtn.textContent = state.quickMode ? "クイック入力: ON" : "クイック入力: OFF";
+  quickBtn.className = `btn ${state.quickMode ? "btn-default" : "btn-outline"}`;
+  quickBtn.onclick = () => {
+    state.quickMode = !state.quickMode;
+    renderTopForm();
+    announceToScreenReader(state.quickMode ? "クイック入力をオンにしました" : "クイック入力をオフにしました");
+  };
+
+  if (timeBucketEl) {
+    timeBucketEl.onchange = (e) => {
+      state.timeBucket = e.target.value;
+    };
+  }
+
+  if (tagsEl) {
+    tagsEl.oninput = (e) => {
+      state.tags = parseTags(e.target.value);
+      renderTagPresets();
+    };
+  }
+
+  if (contextCard) contextCard.classList.toggle("is-hidden-quick", state.quickMode);
+  if (cbtFields) cbtFields.classList.toggle("is-hidden-quick", state.quickMode);
+
+  let quickNote = document.getElementById("quickNote");
+  if (!quickNote) {
+    quickNote = document.createElement("p");
+    quickNote.id = "quickNote";
+    quickNote.className = "quick-note";
+    const panel = document.querySelector('[data-panel="input"]');
+    const scoreGrid = document.getElementById("scoreGrid");
+    if (panel && scoreGrid) panel.insertBefore(quickNote, scoreGrid);
+  }
+  quickNote.textContent = state.quickMode
+    ? "クイック入力では、日付・外出・数値だけをすばやく記録できます。記録条件とCBTメモは隠れます。"
+    : "通常入力では、記録条件と CBT メモも含めて残せます。";
+
+  if (!state.saveNotice) {
+    saveBtn.textContent = selectedRecord() ? "この日付を更新する" : "この日付で保存する";
+  }
+  saveBtn.classList.toggle("is-saved", Boolean(state.saveNotice));
+  saveBtn.onclick = saveCurrentRecord;
+}
+
+function renderCBTForm() {
+  const bind = (id, key) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.value = key === "memo" ? state.memo : state.cbt[key];
+    el.oninput = (e) => {
+      if (key === "memo") state.memo = e.target.value;
+      else state.cbt[key] = e.target.value;
+    };
+  };
+  bind("situation", "situation");
+  bind("automaticThought", "automaticThought");
+  bind("adaptiveThought", "adaptiveThought");
+  bind("memo", "memo");
+}
+
+function renderMetricToggleWrap() {
+  const wrap = document.getElementById("metricToggleWrap");
+  wrap.innerHTML = "";
+  getAllMetrics().forEach(metric => {
+    const btn = document.createElement("button");
+    const active = state.visibleMetricIds.includes(metric.id);
+    btn.className = `btn ${active ? "btn-default" : "btn-outline"} chip-btn`;
+    btn.textContent = metric.label;
+    btn.addEventListener("click", () => toggleMetricVisible(metric.id));
+    wrap.appendChild(btn);
+  });
+}
+
+function renderChart() {
+  const canvas = document.getElementById("historyChart");
+  if (!canvas) return;
+  const sorted = [...state.records].sort((a, b) => a.date.localeCompare(b.date));
+  const labels = sorted.map(r => formatDateLabel(r.date));
+  const visibleMetrics = getAllMetrics().filter(m => state.visibleMetricIds.includes(m.id));
+  const datasets = visibleMetrics.map((metric, index) => ({
+    label: metric.label,
+    data: sorted.map(r => Number(r.scores?.[metric.id] ?? null)),
+    borderColor: SERIES_COLORS[index % SERIES_COLORS.length],
+    backgroundColor: SERIES_COLORS[index % SERIES_COLORS.length],
+    borderWidth: 3,
+    pointRadius: 0,
+    tension: 0.25,
+    borderDash: SERIES_STYLES[index % SERIES_STYLES.length]
+  }));
+  datasets.push({
+    label: "外出日",
+    data: sorted.map(r => (r.wentOut ? 100 : null)),
+    borderColor: "#94a3b8",
+    backgroundColor: "#94a3b8",
+    borderWidth: 1.5,
+    pointRadius: 0,
+    tension: 0,
+    spanGaps: false,
+    borderDash: [6, 6]
+  });
+
+  if (state.chart) {
+    state.chart.destroy();
+    state.chart = null;
+  }
+
+  state.chart = new Chart(canvas, {
+    type: "line",
+    data: { labels, datasets },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: { mode: "index", intersect: false },
+      scales: { y: { min: 0, max: 100, ticks: { stepSize: 20 } } },
+      plugins: { legend: { display: true }, tooltip: { enabled: true } }
+    }
+  });
+}
+
+function renderChartSummary() {
+  const summary = document.getElementById("chartSummary");
+  if (!summary) return;
+  const visibleMetrics = getAllMetrics().filter(m => state.visibleMetricIds.includes(m.id));
+  summary.innerHTML = visibleMetrics.map((metric, index) => {
+    const color = SERIES_COLORS[index % SERIES_COLORS.length];
+    const dashed = SERIES_STYLES[index % SERIES_STYLES.length].length ? " dashed" : "";
+    return `<div class="chart-summary-item"><span class="chart-line-swatch${dashed}" style="border-top-color:${color}"></span><span>${metric.label}</span></div>`;
+  }).join("") + '<div class="access-note">色だけでなく、線のパターンでも区別できるようにしています。</div>';
+}
+
+function renderWeeklySummary() {
+  const card = document.getElementById("weeklySummaryCard");
+  const recent7 = [...state.records].sort((a, b) => a.date.localeCompare(b.date)).slice(-7);
+  const previous7 = [...state.records].sort((a, b) => a.date.localeCompare(b.date)).slice(-14, -7);
+  const delta = (metricId) => {
+    if (!recent7.length || !previous7.length) return "-";
+    return averageFor(recent7, metricId) - averageFor(previous7, metricId);
+  };
+  card.innerHTML = `
+    <div class="card-header">
+      <h3 class="card-title">週次サマリー</h3>
+      <p class="card-description">直近7日とその前の7日を比較します。</p>
+    </div>
+    <div class="card-content">
+      <div class="analysis-stack">
+        <div class="analysis-row"><div><div class="analysis-label">しんどさ差分</div><div class="analysis-sub">直近7日 - 前週</div></div><div class="analysis-sub">${delta("fatigue")}</div></div>
+        <div class="analysis-row"><div><div class="analysis-label">関心差分</div><div class="analysis-sub">直近7日 - 前週</div></div><div class="analysis-sub">${delta("interest")}</div></div>
+        <div class="analysis-row"><div><div class="analysis-label">気分の重さ差分</div><div class="analysis-sub">直近7日 - 前週</div></div><div class="analysis-sub">${delta("heaviness")}</div></div>
+      </div>
+    </div>
+  `;
+}
+
+function renderBehaviorComparison() {
+  const card = document.getElementById("behaviorComparisonCard");
+  const outings = state.records.filter(r => r.wentOut);
+  const nonOutings = state.records.filter(r => !r.wentOut);
+  const rows = DEFAULT_METRICS.map(metric => `
+    <tr>
+      <td>${metric.label}</td>
+      <td style="text-align:center;">${averageFor(outings, metric.id)}</td>
+      <td style="text-align:center;">${averageFor(nonOutings, metric.id)}</td>
+    </tr>
+  `).join("");
+  card.innerHTML = `
+    <div class="card-header">
+      <h3 class="card-title">外出日と非外出日の比較</h3>
+      <p class="card-description">30分以上外出した日と、そうでない日の平均値を比較します。</p>
+    </div>
+    <div class="card-content">
+      <div class="record-badges" style="margin-top:0; margin-bottom:12px;">
+        <span class="badge badge-muted">外出日数 ${outings.length}</span>
+        <span class="badge badge-muted">非外出日数 ${nonOutings.length}</span>
+      </div>
+      <div style="overflow:auto;">
+        <table class="table-like">
+          <thead><tr><th>項目</th><th style="text-align:center;">外出日</th><th style="text-align:center;">非外出日</th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+    </div>
+  `;
+}
+
+function renderWeekdayAnalysis() {
+  const wrap = document.getElementById("weekdayAnalysis");
+  const groups = {};
+  state.records.forEach(record => {
+    const key = weekdayJa(record.date);
+    groups[key] = groups[key] || [];
+    groups[key].push(record);
+  });
+  const order = ["月", "火", "水", "木", "金", "土", "日"];
+  const rows = order.filter(day => groups[day]?.length).map(day => `
+    <tr>
+      <td>${day}</td>
+      <td>${averageFor(groups[day], "fatigue")}</td>
+      <td>${averageFor(groups[day], "interest")}</td>
+      <td>${averageFor(groups[day], "heaviness")}</td>
+    </tr>
+  `).join("");
+  wrap.innerHTML = rows
+    ? `<div style="overflow:auto;"><table class="table-like"><thead><tr><th>曜日</th><th>しんどさ</th><th>関心</th><th>重さ</th></tr></thead><tbody>${rows}</tbody></table></div>`
+    : `<p class="empty-text">まだ分析できる記録がありません。</p>`;
+}
+
+function renderTimeAnalysis() {
+  const wrap = document.getElementById("timeAnalysis");
+  const buckets = { morning: [], afternoon: [], night: [] };
+  state.records.forEach(record => {
+    const key = record.timeBucket || "morning";
+    if (buckets[key]) buckets[key].push(record);
+  });
+  const labels = { morning: "朝", afternoon: "昼", night: "夜" };
+  const rows = Object.entries(labels).filter(([key]) => buckets[key].length).map(([key, label]) => `
+    <tr>
+      <td>${label}</td>
+      <td>${averageFor(buckets[key], "fatigue")}</td>
+      <td>${averageFor(buckets[key], "interest")}</td>
+      <td>${averageFor(buckets[key], "heaviness")}</td>
+    </tr>
+  `).join("");
+  wrap.innerHTML = rows
+    ? `<div style="overflow:auto;"><table class="table-like"><thead><tr><th>時間帯</th><th>しんどさ</th><th>関心</th><th>重さ</th></tr></thead><tbody>${rows}</tbody></table></div>`
+    : `<p class="empty-text">時間帯の記録がまだありません。</p>`;
+}
+
+function renderTagAnalysis() {
+  const wrap = document.getElementById("tagAnalysis");
+  const tagMap = {};
+  state.records.forEach(record => {
+    (Array.isArray(record.tags) ? record.tags : []).forEach(tag => {
+      tagMap[tag] = tagMap[tag] || [];
+      tagMap[tag].push(record);
+    });
+  });
+  const topTags = Object.entries(tagMap).sort((a, b) => b[1].length - a[1].length).slice(0, 8);
+  wrap.innerHTML = topTags.length
+    ? `<div class="analysis-stack">${topTags.map(([tag, records]) => `
+      <div class="analysis-row">
+        <div>
+          <div class="analysis-label">#${escapeHtml(tag)}</div>
+          <div class="analysis-sub">使用回数 ${records.length}</div>
+        </div>
+        <div class="analysis-sub">関心 ${averageFor(records, "interest")} / しんどさ ${averageFor(records, "fatigue")}</div>
+      </div>`).join("")}</div>`
+    : `<p class="empty-text">タグがまだありません。</p>`;
+}
+
+function renderCorrelationAnalysis() {
+  const wrap = document.getElementById("correlationAnalysis");
+  if (!state.customMetrics.length) {
+    wrap.innerHTML = `<p class="empty-text">追加項目があると、基礎指標との動きの近さを見られます。</p>`;
+    return;
+  }
+  const html = state.customMetrics.slice(0, 6).map(metric => {
+    const high = state.records.filter(r => Number(r.scores?.[metric.id] || 0) >= 60);
+    const low = state.records.filter(r => Number(r.scores?.[metric.id] || 0) <= 40);
+    return `
+      <div class="analysis-row">
+        <div>
+          <div class="analysis-label">${metric.label}</div>
+          <div class="analysis-sub">高い日 / 低い日の関心平均</div>
+        </div>
+        <div class="analysis-sub">${high.length ? averageFor(high, "interest") : "-"} / ${low.length ? averageFor(low, "interest") : "-"}</div>
+      </div>
+    `;
+  }).join("");
+  wrap.innerHTML = `<div class="analysis-stack">${html}</div><p class="mini-note">左が追加項目が高い日の関心平均、右が低い日の関心平均です。厳密な統計ではなく、傾向を見るための簡易表示です。</p>`;
+}
+
+function renderRecords() {
+  const wrap = document.getElementById("recordsWrap");
+  const sorted = [...state.records].sort((a, b) => b.date.localeCompare(a.date));
+  if (!sorted.length) {
+    wrap.innerHTML = `<div class="card"><div class="card-content"><div class="empty-state">まだ記録がありません。入力タブから最初の1件を保存してください。</div></div></div>`;
+    return;
+  }
+
+  wrap.innerHTML = "";
+  sorted.forEach(record => {
+    const card = document.createElement("div");
+    card.className = "card";
+    const metricBadges = getAllMetrics().map(metric => `<span class="badge badge-muted">${metric.label} ${record.scores?.[metric.id] ?? "-"}</span>`).join("");
+    const tagBadges = (record.tags || []).map(tag => `<span class="badge badge-muted">#${escapeHtml(tag)}</span>`).join("");
+    const timeLabel = record.timeBucket === "morning" ? "朝" : record.timeBucket === "afternoon" ? "昼" : "夜";
+    card.innerHTML = `
+      <div class="card-content">
+        <div class="record-row">
+          <button type="button" class="record-main">
+            <div class="record-header">
+              <p class="record-date">${record.date}</p>
+              ${record.wentOut ? `<span class="badge">外出あり</span>` : ""}
+              <span class="badge badge-muted">${timeLabel}</span>
+            </div>
+            <div class="record-badges">${metricBadges}${tagBadges}</div>
+            ${(record.cbt?.automaticThought || record.memo) ? `<p class="record-preview">${escapeHtml(record.cbt?.automaticThought || record.memo)}</p>` : ""}
+          </button>
+          <button class="btn btn-outline delete-btn" type="button">削除</button>
+        </div>
+      </div>
+    `;
+    card.querySelector(".record-main").addEventListener("click", () => loadRecordIntoForm(record));
+    card.querySelector(".delete-btn").addEventListener("click", () => deleteRecord(record.date));
+    wrap.appendChild(card);
+  });
+}
+
+function renderTagPresets() {
+  const wrap = document.getElementById("tagPresetWrap");
+  if (!wrap) return;
+  wrap.innerHTML = "";
+  TAG_PRESETS.forEach((tag) => {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    const active = state.tags.includes(tag);
+    btn.className = `btn ${active ? "btn-default" : "btn-outline"} tag-chip`;
+    btn.textContent = tag;
+    btn.onclick = () => {
+      if (state.tags.includes(tag)) {
+        state.tags = state.tags.filter(t => t !== tag);
+      } else {
+        state.tags = [...state.tags, tag];
+      }
+      const tagsEl = document.getElementById("recordTags");
+      if (tagsEl) tagsEl.value = state.tags.join(", ");
+      renderTagPresets();
+      announceToScreenReader(`${tag}タグを${state.tags.includes(tag) ? "追加" : "削除"}しました`);
+    };
+    wrap.appendChild(btn);
+  });
+}
+
+function renderPresetMetrics() {
+  const wrap = document.getElementById("presetMetricWrap");
+  wrap.innerHTML = "";
+  PRESET_METRICS.forEach(metric => {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "btn btn-outline chip-btn";
+    btn.textContent = metric.label;
+    btn.onclick = () => addCustomMetric(metric.label, metric.description);
+    wrap.appendChild(btn);
+  });
+}
+
+function renderCustomMetrics() {
+  const wrap = document.getElementById("customMetricsWrap");
+  if (!state.customMetrics.length) {
+    wrap.innerHTML = `<p class="empty-text">まだ追加項目はありません。</p>`;
+    return;
+  }
+  wrap.innerHTML = "";
+  state.customMetrics.forEach(metric => {
+    const row = document.createElement("div");
+    row.className = "custom-metric-row";
+    row.innerHTML = `
+      <div>
+        <p class="custom-metric-title">${metric.label}</p>
+        <p class="custom-metric-description">${metric.description}</p>
+      </div>
+      <button class="btn btn-outline" type="button">削除</button>
+    `;
+    row.querySelector("button").onclick = () => removeCustomMetric(metric.id);
+    wrap.appendChild(row);
+  });
+}
+
+function renderTabs() {
+  document.querySelectorAll(".tab").forEach((btn, index) => {
+    const selected = btn.dataset.tab === state.activeTab;
+    btn.classList.toggle("tab-active", selected);
+    btn.setAttribute("role", "tab");
+    btn.setAttribute("aria-selected", selected ? "true" : "false");
+    btn.setAttribute("tabindex", selected ? "0" : "-1");
+    btn.id = `${btn.dataset.tab}-tab-${index}`;
+    btn.setAttribute("aria-controls", `${btn.dataset.tab}-panel`);
+  });
+  document.querySelectorAll(".tab-panel").forEach(panel => {
+    const active = panel.dataset.panel === state.activeTab;
+    panel.classList.toggle("active", active);
+    panel.setAttribute("role", "tabpanel");
+    panel.id = `${panel.dataset.panel}-panel`;
+    panel.setAttribute("aria-hidden", active ? "false" : "true");
+    panel.setAttribute("tabindex", "-1");
+  });
+}
+
+function bindGlobal() {
+  const tabs = Array.from(document.querySelectorAll(".tab"));
+  tabs.forEach((btn) => {
+    btn.addEventListener("click", () => {
+      state.activeTab = btn.dataset.tab;
+      renderTabs();
+      if (state.activeTab === "graph") {
+        renderChart();
+        renderChartSummary();
+      }
+      announceToScreenReader(`${btn.textContent}タブを開きました`);
+    });
+    btn.addEventListener("keydown", (e) => {
+      const currentIndex = tabs.indexOf(btn);
+      if (e.key === "ArrowRight" || e.key === "ArrowDown") {
+        e.preventDefault();
+        tabs[(currentIndex + 1) % tabs.length].focus();
+      } else if (e.key === "ArrowLeft" || e.key === "ArrowUp") {
+        e.preventDefault();
+        tabs[(currentIndex - 1 + tabs.length) % tabs.length].focus();
+      } else if (e.key === "Home") {
+        e.preventDefault();
+        tabs[0].focus();
+      } else if (e.key === "End") {
+        e.preventDefault();
+        tabs[tabs.length - 1].focus();
+      } else if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        btn.click();
+      }
+    });
+  });
+
+  document.getElementById("csvTopBtn").onclick = downloadCsv;
+  document.getElementById("csvBottomBtn").onclick = downloadCsv;
+  document.getElementById("jsonExportBtn").onclick = exportJson;
+  document.getElementById("jsonImportTriggerBtn").onclick = () => document.getElementById("jsonImportInput").click();
+  document.getElementById("jsonImportInput").onchange = (e) => {
+    const file = e.target.files?.[0];
+    if (file) importJson(file);
+    e.target.value = "";
+  };
+  document.getElementById("addMetricBtn").onclick = () => {
+    addCustomMetric(
+      document.getElementById("newMetricName").value,
+      document.getElementById("newMetricDescription").value
+    );
+    document.getElementById("newMetricName").value = "";
+    document.getElementById("newMetricDescription").value = "";
+  };
+}
+
+function renderAll() {
+  renderStats();
+  renderTabs();
+  renderTopForm();
+  renderScoreGrid();
+  renderCBTForm();
+  renderMetricToggleWrap();
+  renderChartSummary();
+  renderWeeklySummary();
+  renderBehaviorComparison();
+  renderWeekdayAnalysis();
+  renderTimeAnalysis();
+  renderTagAnalysis();
+  renderCorrelationAnalysis();
+  renderRecords();
+  renderTagPresets();
+  renderPresetMetrics();
+  renderCustomMetrics();
+  if (state.activeTab === "graph") renderChart();
+}
+
+function init() {
+  loadState();
+  bindGlobal();
+  renderAll();
+}
+
+window.addEventListener("DOMContentLoaded", init);

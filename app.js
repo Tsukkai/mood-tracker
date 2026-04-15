@@ -639,7 +639,9 @@ function renderTopForm() {
   wentOutBtn.onclick = () => {
     state.wentOut = !state.wentOut;
     renderTopForm();
-    announceToScreenReader(state.wentOut ? "30分以上外出したに設定しました" : "外出なしに設定しました");
+    announceToScreenReader(
+      state.wentOut ? "30分以上外出したに設定しました" : "外出なしに設定しました"
+    );
   };
 
   quickBtn.textContent = state.quickMode ? "クイック入力: ON" : "クイック入力: OFF";
@@ -649,8 +651,8 @@ function renderTopForm() {
     renderTopForm();
     announceToScreenReader(
       state.quickMode
-        ? "クイック入力をオンにしました。記録状況とCBTメモを表示します。"
-        : "クイック入力をオフにしました。記録状況とCBTメモを隠します。"
+        ? "クイック入力をオンにしました。記録条件とCBTメモを表示します。"
+        : "クイック入力をオフにしました。記録条件とCBTメモを隠します。"
     );
   };
 
@@ -667,8 +669,15 @@ function renderTopForm() {
     };
   }
 
-  if (contextCard) contextCard.classList.toggle("is-hidden-quick", !state.quickMode);
-  if (cbtCard) cbtCard.classList.toggle("is-hidden-quick", !state.quickMode);
+  if (contextCard) {
+    if (state.quickMode) contextCard.classList.remove("is-hidden-quick");
+    else contextCard.classList.add("is-hidden-quick");
+  }
+
+  if (cbtCard) {
+    if (state.quickMode) cbtCard.classList.remove("is-hidden-quick");
+    else cbtCard.classList.add("is-hidden-quick");
+  }
 
   let quickNote = document.getElementById("quickNote");
   if (!quickNote) {
@@ -681,8 +690,8 @@ function renderTopForm() {
   }
 
   quickNote.textContent = state.quickMode
-    ? "ONでは、記録状況とCBTメモも表示して詳しく入力できます。"
-    : "OFFでは、記録状況とCBTメモを隠して簡潔に記録できます。";
+    ? "ONでは、記録条件とCBTメモも表示して詳しく入力できます。"
+    : "OFFでは、記録条件とCBTメモを隠して簡潔に記録できます。";
 
   if (!state.saveNotice) {
     saveBtn.textContent = state.currentEntryId ? "この記録を更新する" : "この内容で保存する";
@@ -894,6 +903,15 @@ function renderWeekdayAnalysis() {
   wrap.innerHTML = rows
     ? `<div style="overflow:auto;"><table class="table-like"><thead><tr><th>曜日</th><th>しんどさ</th><th>関心</th><th>重さ</th></tr></thead><tbody>${rows}</tbody></table></div>`
     : `<p class="empty-text">まだ分析できる記録がありません。</p>`;
+
+<div class="mini-bar-row">
+  <div class="mini-bar-label">月</div>
+  <div class="mini-bar-track">
+    <div class="mini-bar-fill" style="width: 62%;"></div>
+  </div>
+  <div class="mini-bar-value">62</div>
+</div>
+  
 }
 
 function renderTimeAnalysis() {

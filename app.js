@@ -1,6 +1,7 @@
-const RECORDS_KEY = "mood-tracker-records-v2";
-const CUSTOM_METRICS_KEY = "mood-tracker-custom-metrics-v2";
-const VISIBLE_METRICS_KEY = "mood-tracker-visible-metrics-v2";
+const RECORDS_KEY = "mood-tracker-records-v3";
+const CUSTOM_METRICS_KEY = "mood-tracker-custom-metrics-v3";
+const VISIBLE_METRICS_KEY = "mood-tracker-visible-metrics-v3";
+const TAG_PRESETS_KEY = "mood-tracker-tag-presets-v1";
 
 const DEFAULT_METRICS = [
   { id: "fatigue", label: "しんどさ", description: "心身のつらさ。高いほどきつい。" },
@@ -8,7 +9,7 @@ const DEFAULT_METRICS = [
   { id: "heaviness", label: "気分の重さ", description: "沈みや圧迫感。高いほど重い。" }
 ];
 
-const TAG_PRESETS = ["通院", "仕事", "休み", "人と会った", "雨", "睡眠不足", "外出", "家にいた"];
+const DEFAULT_TAG_PRESETS = ["通院", "仕事", "休み", "人と会った", "雨", "睡眠不足", "外出", "家にいた"];
 
 const PRESET_METRICS = [
   { label: "不安", description: "高いほど不安が強い。" },
@@ -24,8 +25,11 @@ const SERIES_STYLES = [[], [8, 4], [2, 3], [10, 3, 2, 3], [12, 5], [1, 4], [6, 2
 let state = {
   records: [],
   customMetrics: [],
-  visibleMetricIds: DEFAULT_METRICS.map(m => m.id),
+  visibleMetricIds: DEFAULT_METRICS.map((m) => m.id),
+  tagPresets: [...DEFAULT_TAG_PRESETS],
+  currentEntryId: null,
   currentDate: todayString(),
+  currentClockTime: currentTimeString(),
   currentScores: {},
   wentOut: false,
   timeBucket: "morning",
@@ -43,12 +47,23 @@ function announceToScreenReader(message) {
   const el = document.getElementById("screenReaderStatus");
   if (!el) return;
   el.textContent = "";
-  window.setTimeout(() => { el.textContent = message; }, 10);
+  window.setTimeout(() => {
+    el.textContent = message;
+  }, 10);
 }
 
 function todayString() {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+function currentTimeString() {
+  const d = new Date();
+  return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+}
+
+function makeEntryId() {
+  return `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
 function safeParse(key, fallback) {
@@ -69,20 +84,28 @@ function clampScore(value) {
 }
 
 function parseTags(text) {
-  return text.split(",").map(s => s.trim()).filter(Boolean);
+  return text
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .filter((tag, index, arr) => arr.indexOf(tag) === index);
 }
 
 function slugify(text) {
   const basic = text.trim().toLowerCase().replaceAll(" ", "-");
-  const safe = Array.from(basic).filter((ch) => {
-    const code = ch.charCodeAt(0);
-    return (
-      (code >= 48 && code <= 57) ||
-      (code >= 97 && code <= 122) ||
-      ch === "-" ||
-      ((code >= 12352 && code <= 12447) || (code >= 12448 && code <= 12543) || (code >= 19968 && code <= 40959))
-    );
-  }).join("");
+  const safe = Array.from(basic)
+    .filter((ch) => {
+      const code = ch.charCodeAt(0);
+      return (
+        (code >= 48 && code <= 57) ||
+        (code >= 97 && code <= 122) ||
+        ch === "-" ||
+        ((code >= 12352 && code <= 12447) ||
+          (code >= 12448 && code <= 12543) ||
+          (code >= 19968 && code <= 40959))
+      );
+    })
+    .join("");
   return safe || `metric-${Date.now()}`;
 }
 
@@ -104,17 +127,21 @@ function getAllMetrics() {
 function buildDefaultScores() {
   const all = getAllMetrics();
   const obj = {};
-  all.forEach(metric => { obj[metric.id] = 50; });
+  all.forEach((metric) => {
+    obj[metric.id] = 50;
+  });
   return obj;
 }
 
 function normalizeRecord(record) {
   return {
+    id: record?.id || makeEntryId(),
     date: record?.date || todayString(),
+    clockTime: record?.clockTime || "12:00",
     scores: { ...buildDefaultScores(), ...(record?.scores || {}) },
     wentOut: Boolean(record?.wentOut),
     timeBucket: record?.timeBucket || "morning",
-    tags: Array.isArray(record?.tags) ? record.tags : [],
+    tags: Array.isArray(record?.tags) ? record.tags.filter(Boolean) : [],
     cbt: {
       situation: record?.cbt?.situation || "",
       automaticThought: record?.cbt?.automaticThought || "",
@@ -127,21 +154,31 @@ function normalizeRecord(record) {
 function loadState() {
   state.customMetrics = safeParse(CUSTOM_METRICS_KEY, []);
   state.records = safeParse(RECORDS_KEY, []).map(normalizeRecord);
+
   const savedVisible = safeParse(VISIBLE_METRICS_KEY, null);
   state.visibleMetricIds = Array.isArray(savedVisible)
     ? savedVisible
-    : [...DEFAULT_METRICS.map(m => m.id), ...state.customMetrics.map(m => m.id)];
-  resetForm(false);
+    : [...DEFAULT_METRICS.map((m) => m.id), ...state.customMetrics.map((m) => m.id)];
+
+  const savedTagPresets = safeParse(TAG_PRESETS_KEY, null);
+  state.tagPresets = Array.isArray(savedTagPresets) && savedTagPresets.length
+    ? savedTagPresets
+    : [...DEFAULT_TAG_PRESETS];
+
+  resetForm();
 }
 
 function savePersistentState() {
   localStorage.setItem(RECORDS_KEY, JSON.stringify(state.records));
   localStorage.setItem(CUSTOM_METRICS_KEY, JSON.stringify(state.customMetrics));
   localStorage.setItem(VISIBLE_METRICS_KEY, JSON.stringify(state.visibleMetricIds));
+  localStorage.setItem(TAG_PRESETS_KEY, JSON.stringify(state.tagPresets));
 }
 
-function resetForm(setDate = true) {
-  state.currentDate = setDate ? todayString() : state.currentDate;
+function resetForm() {
+  state.currentEntryId = null;
+  state.currentDate = todayString();
+  state.currentClockTime = currentTimeString();
   state.currentScores = buildDefaultScores();
   state.wentOut = false;
   state.timeBucket = "morning";
@@ -151,16 +188,14 @@ function resetForm(setDate = true) {
 }
 
 function selectedRecord() {
-  return state.records.find(r => r.date === state.currentDate) || null;
-}
-
-function currentRecordIndex() {
-  return state.records.findIndex(r => r.date === state.currentDate);
+  return state.records.find((r) => r.id === state.currentEntryId) || null;
 }
 
 function averageFor(records, metricId) {
   if (!records.length) return "-";
-  return Math.round(records.reduce((sum, r) => sum + Number(r.scores?.[metricId] || 0), 0) / records.length);
+  return Math.round(
+    records.reduce((sum, r) => sum + Number(r.scores?.[metricId] || 0), 0) / records.length
+  );
 }
 
 function escapeHtml(text) {
@@ -172,25 +207,31 @@ function escapeHtml(text) {
 
 function triggerSaveNotice(message) {
   state.saveNotice = message;
+
   const saveBtn = document.getElementById("saveBtn");
   if (saveBtn) {
     saveBtn.classList.add("is-saved");
     saveBtn.textContent = message;
   }
+
   const notice = document.getElementById("saveNotice");
   if (notice) {
     notice.textContent = message;
     notice.classList.add("show");
   }
+
   announceToScreenReader(message);
+
   if (state.saveNoticeTimer) clearTimeout(state.saveNoticeTimer);
   state.saveNoticeTimer = setTimeout(() => {
     state.saveNotice = "";
+
     const currentBtn = document.getElementById("saveBtn");
     if (currentBtn) {
       currentBtn.classList.remove("is-saved");
-      currentBtn.textContent = selectedRecord() ? "この日付を更新する" : "この日付で保存する";
+      currentBtn.textContent = state.currentEntryId ? "この記録を更新する" : "この内容で保存する";
     }
+
     const currentNotice = document.getElementById("saveNotice");
     if (currentNotice) {
       currentNotice.classList.remove("show");
@@ -201,7 +242,9 @@ function triggerSaveNotice(message) {
 
 function saveCurrentRecord() {
   const record = {
+    id: state.currentEntryId || makeEntryId(),
     date: state.currentDate,
+    clockTime: state.currentClockTime,
     scores: { ...state.currentScores },
     wentOut: !!state.wentOut,
     timeBucket: state.timeBucket,
@@ -209,18 +252,33 @@ function saveCurrentRecord() {
     cbt: { ...state.cbt },
     memo: state.memo
   };
-  const idx = currentRecordIndex();
-  if (idx >= 0) state.records[idx] = record;
-  else state.records.push(record);
-  state.records = state.records.map(normalizeRecord).sort((a, b) => a.date.localeCompare(b.date));
+
+  const existingIdx = state.records.findIndex((r) => r.id === record.id);
+
+  if (existingIdx >= 0) {
+    state.records[existingIdx] = normalizeRecord(record);
+    triggerSaveNotice("更新しました");
+  } else {
+    state.records.push(normalizeRecord(record));
+    triggerSaveNotice("保存しました");
+    resetForm();
+  }
+
+  state.records.sort((a, b) => {
+    const aKey = `${a.date} ${a.clockTime || "00:00"} ${a.id}`;
+    const bKey = `${b.date} ${b.clockTime || "00:00"} ${b.id}`;
+    return aKey.localeCompare(bKey);
+  });
+
   savePersistentState();
-  triggerSaveNotice(idx >= 0 ? "更新しました" : "保存しました");
   renderAll();
 }
 
 function loadRecordIntoForm(record) {
   const normalized = normalizeRecord(record);
+  state.currentEntryId = normalized.id;
   state.currentDate = normalized.date;
+  state.currentClockTime = normalized.clockTime || "12:00";
   state.currentScores = { ...buildDefaultScores(), ...normalized.scores };
   state.wentOut = normalized.wentOut;
   state.timeBucket = normalized.timeBucket;
@@ -232,42 +290,70 @@ function loadRecordIntoForm(record) {
   window.scrollTo({ top: 0, behavior: "smooth" });
 }
 
-function deleteRecord(date) {
-  state.records = state.records.filter(r => r.date !== date);
+function deleteRecord(id) {
+  state.records = state.records.filter((r) => r.id !== id);
+  if (state.currentEntryId === id) resetForm();
   savePersistentState();
-  if (state.currentDate === date) resetForm();
   renderAll();
 }
 
 function addCustomMetric(label, description) {
   const trimmed = (label || "").trim();
   if (!trimmed) return;
+
   const id = `${slugify(trimmed)}-${Date.now().toString().slice(-4)}`;
-  const metric = { id, label: trimmed, description: (description || "").trim() || `${trimmed}の強さ。高いほど強い。` };
+  const metric = {
+    id,
+    label: trimmed,
+    description: (description || "").trim() || `${trimmed}の強さ。高いほど強い。`
+  };
+
   state.customMetrics.push(metric);
   state.visibleMetricIds.push(id);
   state.currentScores[id] = 50;
-  state.records = state.records.map(r => ({ ...r, scores: { ...r.scores, [id]: r.scores?.[id] ?? 50 } }));
+  state.records = state.records.map((r) => ({
+    ...r,
+    scores: { ...r.scores, [id]: r.scores?.[id] ?? 50 }
+  }));
+
   savePersistentState();
   renderAll();
 }
 
 function removeCustomMetric(metricId) {
-  state.customMetrics = state.customMetrics.filter(m => m.id !== metricId);
-  state.visibleMetricIds = state.visibleMetricIds.filter(id => id !== metricId);
+  state.customMetrics = state.customMetrics.filter((m) => m.id !== metricId);
+  state.visibleMetricIds = state.visibleMetricIds.filter((id) => id !== metricId);
   delete state.currentScores[metricId];
-  state.records = state.records.map(r => {
+
+  state.records = state.records.map((r) => {
     const nextScores = { ...r.scores };
     delete nextScores[metricId];
     return { ...r, scores: nextScores };
   });
+
   savePersistentState();
   renderAll();
 }
 
+function addTagTemplate(tag) {
+  const trimmed = (tag || "").trim();
+  if (!trimmed || state.tagPresets.includes(trimmed)) return;
+  state.tagPresets.push(trimmed);
+  savePersistentState();
+  renderTagTemplateSettings();
+  renderTagPresets();
+}
+
+function removeTagTemplate(tag) {
+  state.tagPresets = state.tagPresets.filter((t) => t !== tag);
+  savePersistentState();
+  renderTagTemplateSettings();
+  renderTagPresets();
+}
+
 function toggleMetricVisible(metricId) {
   if (state.visibleMetricIds.includes(metricId)) {
-    state.visibleMetricIds = state.visibleMetricIds.filter(id => id !== metricId);
+    state.visibleMetricIds = state.visibleMetricIds.filter((id) => id !== metricId);
   } else {
     state.visibleMetricIds.push(metricId);
   }
@@ -281,21 +367,42 @@ function toggleMetricVisible(metricId) {
 
 function downloadCsv() {
   const metrics = getAllMetrics();
-  const header = ["date", ...metrics.map(m => m.label), "went_out_30min", "time_bucket", "tags", "situation", "automatic_thought", "adaptive_thought", "memo"];
-  const escapeCsv = value => '"' + String(value ?? "").replace(/"/g, '""') + '"';
+  const header = [
+    "entry_id",
+    "date",
+    "clock_time",
+    ...metrics.map((m) => m.label),
+    "went_out_30min",
+    "time_bucket",
+    "tags",
+    "situation",
+    "automatic_thought",
+    "adaptive_thought",
+    "memo"
+  ];
+
+  const escapeCsv = (value) => '"' + String(value ?? "").replace(/"/g, '""') + '"';
+
   const lines = [header.join(",")].concat(
-    state.records.map(row => [
-      row.date,
-      ...metrics.map(m => row.scores?.[m.id] ?? ""),
-      row.wentOut ? "true" : "false",
-      row.timeBucket || "morning",
-      (row.tags || []).join("|"),
-      row.cbt?.situation || "",
-      row.cbt?.automaticThought || "",
-      row.cbt?.adaptiveThought || "",
-      row.memo || ""
-    ].map(escapeCsv).join(","))
+    state.records.map((row) =>
+      [
+        row.id,
+        row.date,
+        row.clockTime || "",
+        ...metrics.map((m) => row.scores?.[m.id] ?? ""),
+        row.wentOut ? "true" : "false",
+        row.timeBucket || "morning",
+        (row.tags || []).join("|"),
+        row.cbt?.situation || "",
+        row.cbt?.automaticThought || "",
+        row.cbt?.adaptiveThought || "",
+        row.memo || ""
+      ]
+        .map(escapeCsv)
+        .join(",")
+    )
   );
+
   const blob = new Blob([lines.join("\n")], { type: "text/csv;charset=utf-8;" });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
@@ -310,9 +417,13 @@ function exportJson() {
     exportedAt: new Date().toISOString(),
     records: state.records,
     customMetrics: state.customMetrics,
-    visibleMetricIds: state.visibleMetricIds
+    visibleMetricIds: state.visibleMetricIds,
+    tagPresets: state.tagPresets
   };
-  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json;charset=utf-8;" });
+
+  const blob = new Blob([JSON.stringify(payload, null, 2)], {
+    type: "application/json;charset=utf-8;"
+  });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
@@ -327,11 +438,16 @@ function importJson(file) {
     try {
       const parsed = JSON.parse(reader.result);
       if (!Array.isArray(parsed.records)) throw new Error("invalid");
+
       state.customMetrics = Array.isArray(parsed.customMetrics) ? parsed.customMetrics : [];
       state.records = parsed.records.map(normalizeRecord);
       state.visibleMetricIds = Array.isArray(parsed.visibleMetricIds)
         ? parsed.visibleMetricIds
-        : [...DEFAULT_METRICS.map(m => m.id), ...state.customMetrics.map(m => m.id)];
+        : [...DEFAULT_METRICS.map((m) => m.id), ...state.customMetrics.map((m) => m.id)];
+      state.tagPresets = Array.isArray(parsed.tagPresets) && parsed.tagPresets.length
+        ? parsed.tagPresets
+        : [...DEFAULT_TAG_PRESETS];
+
       savePersistentState();
       resetForm();
       renderAll();
@@ -345,14 +461,20 @@ function importJson(file) {
 
 function renderStats() {
   const grid = document.getElementById("statsGrid");
-  const recent7 = [...state.records].sort((a, b) => a.date.localeCompare(b.date)).slice(-7);
+  const recent7 = [...state.records]
+    .sort((a, b) => `${a.date} ${a.clockTime}`.localeCompare(`${b.date} ${b.clockTime}`))
+    .slice(-7);
+
   const stats = [
-    ["直近7日 しんどさ平均", averageFor(recent7, "fatigue"), "高いほどきつい"],
-    ["直近7日 関心平均", averageFor(recent7, "interest"), "高いほど向きやすい"],
-    ["直近7日 気分の重さ平均", averageFor(recent7, "heaviness"), "高いほど重い"],
-    ["直近7日 外出日数", recent7.length ? recent7.filter(r => r.wentOut).length : "-", "30分以上外出した日"]
+    ["直近7件 しんどさ平均", averageFor(recent7, "fatigue"), "高いほどきつい"],
+    ["直近7件 関心平均", averageFor(recent7, "interest"), "高いほど向きやすい"],
+    ["直近7件 気分の重さ平均", averageFor(recent7, "heaviness"), "高いほど重い"],
+    ["直近7件 外出数", recent7.length ? recent7.filter((r) => r.wentOut).length : "-", "30分以上外出した記録"]
   ];
-  grid.innerHTML = stats.map(([title, value, sub]) => `
+
+  grid.innerHTML = stats
+    .map(
+      ([title, value, sub]) => `
     <div class="card">
       <div class="card-content">
         <div class="stat-title">${title}</div>
@@ -360,7 +482,9 @@ function renderStats() {
         <div class="stat-sub">${sub}</div>
       </div>
     </div>
-  `).join("");
+  `
+    )
+    .join("");
 }
 
 function createMetricCard(metric) {
@@ -382,6 +506,7 @@ function createMetricCard(metric) {
       </div>
     </div>
   `;
+
   const numInput = card.querySelector(".score-number-input");
   const range = card.querySelector(".score-range");
   const buttonWrap = card.querySelector(".score-buttons-grid");
@@ -421,37 +546,33 @@ function createMetricCard(metric) {
 function renderScoreGrid() {
   const grid = document.getElementById("scoreGrid");
   grid.innerHTML = "";
-  getAllMetrics().forEach(metric => grid.appendChild(createMetricCard(metric)));
+  getAllMetrics().forEach((metric) => grid.appendChild(createMetricCard(metric)));
 }
 
 function renderTopForm() {
   const dateEl = document.getElementById("recordDate");
+  const clockEl = document.getElementById("recordClockTime");
   const wentOutBtn = document.getElementById("wentOutBtn");
   const quickBtn = document.getElementById("quickModeBtn");
   const saveBtn = document.getElementById("saveBtn");
   const timeBucketEl = document.getElementById("recordTimeBucket");
   const tagsEl = document.getElementById("recordTags");
   const contextCard = document.getElementById("contextCard");
-  const cbtFields = document.getElementById("cbtFields");
 
   dateEl.value = state.currentDate;
+  if (clockEl) clockEl.value = state.currentClockTime || "12:00";
   if (timeBucketEl) timeBucketEl.value = state.timeBucket || "morning";
   if (tagsEl) tagsEl.value = state.tags.join(", ");
 
   dateEl.onchange = (e) => {
     state.currentDate = e.target.value;
-    const found = selectedRecord();
-    if (found) loadRecordIntoForm(found);
-    else {
-      state.currentScores = buildDefaultScores();
-      state.wentOut = false;
-      state.timeBucket = "morning";
-      state.tags = [];
-      state.cbt = { situation: "", automaticThought: "", adaptiveThought: "" };
-      state.memo = "";
-      renderAll();
-    }
   };
+
+  if (clockEl) {
+    clockEl.onchange = (e) => {
+      state.currentClockTime = e.target.value || "12:00";
+    };
+  }
 
   wentOutBtn.textContent = state.wentOut ? "30分以上外出した" : "外出なし";
   wentOutBtn.className = `btn ${state.wentOut ? "btn-default" : "btn-outline"}`;
@@ -484,7 +605,6 @@ function renderTopForm() {
   }
 
   if (contextCard) contextCard.classList.toggle("is-hidden-quick", state.quickMode);
-  if (cbtFields) cbtFields.classList.toggle("is-hidden-quick", state.quickMode);
 
   let quickNote = document.getElementById("quickNote");
   if (!quickNote) {
@@ -495,37 +615,22 @@ function renderTopForm() {
     const scoreGrid = document.getElementById("scoreGrid");
     if (panel && scoreGrid) panel.insertBefore(quickNote, scoreGrid);
   }
+
   quickNote.textContent = state.quickMode
-    ? "クイック入力では、日付・外出・数値だけをすばやく記録できます。記録条件とCBTメモは隠れます。"
-    : "通常入力では、記録条件と CBT メモも含めて残せます。";
+    ? "クイック入力では、日付・時刻・外出・数値だけをすばやく記録できます。記録条件は隠れます。"
+    : "通常入力では、記録条件も含めて残せます。";
 
   if (!state.saveNotice) {
-    saveBtn.textContent = selectedRecord() ? "この日付を更新する" : "この日付で保存する";
+    saveBtn.textContent = state.currentEntryId ? "この記録を更新する" : "この内容で保存する";
   }
   saveBtn.classList.toggle("is-saved", Boolean(state.saveNotice));
   saveBtn.onclick = saveCurrentRecord;
 }
 
-function renderCBTForm() {
-  const bind = (id, key) => {
-    const el = document.getElementById(id);
-    if (!el) return;
-    el.value = key === "memo" ? state.memo : state.cbt[key];
-    el.oninput = (e) => {
-      if (key === "memo") state.memo = e.target.value;
-      else state.cbt[key] = e.target.value;
-    };
-  };
-  bind("situation", "situation");
-  bind("automaticThought", "automaticThought");
-  bind("adaptiveThought", "adaptiveThought");
-  bind("memo", "memo");
-}
-
 function renderMetricToggleWrap() {
   const wrap = document.getElementById("metricToggleWrap");
   wrap.innerHTML = "";
-  getAllMetrics().forEach(metric => {
+  getAllMetrics().forEach((metric) => {
     const btn = document.createElement("button");
     const active = state.visibleMetricIds.includes(metric.id);
     btn.className = `btn ${active ? "btn-default" : "btn-outline"} chip-btn`;
@@ -538,12 +643,17 @@ function renderMetricToggleWrap() {
 function renderChart() {
   const canvas = document.getElementById("historyChart");
   if (!canvas) return;
-  const sorted = [...state.records].sort((a, b) => a.date.localeCompare(b.date));
-  const labels = sorted.map(r => formatDateLabel(r.date));
-  const visibleMetrics = getAllMetrics().filter(m => state.visibleMetricIds.includes(m.id));
+
+  const sorted = [...state.records].sort((a, b) =>
+    `${a.date} ${a.clockTime || ""}`.localeCompare(`${b.date} ${b.clockTime || ""}`)
+  );
+
+  const labels = sorted.map((r) => `${formatDateLabel(r.date)} ${r.clockTime || ""}`.trim());
+  const visibleMetrics = getAllMetrics().filter((m) => state.visibleMetricIds.includes(m.id));
+
   const datasets = visibleMetrics.map((metric, index) => ({
     label: metric.label,
-    data: sorted.map(r => Number(r.scores?.[metric.id] ?? null)),
+    data: sorted.map((r) => Number(r.scores?.[metric.id] ?? null)),
     borderColor: SERIES_COLORS[index % SERIES_COLORS.length],
     backgroundColor: SERIES_COLORS[index % SERIES_COLORS.length],
     borderWidth: 3,
@@ -551,9 +661,10 @@ function renderChart() {
     tension: 0.25,
     borderDash: SERIES_STYLES[index % SERIES_STYLES.length]
   }));
+
   datasets.push({
-    label: "外出日",
-    data: sorted.map(r => (r.wentOut ? 100 : null)),
+    label: "外出記録",
+    data: sorted.map((r) => (r.wentOut ? 100 : null)),
     borderColor: "#94a3b8",
     backgroundColor: "#94a3b8",
     borderWidth: 1.5,
@@ -575,8 +686,13 @@ function renderChart() {
       responsive: true,
       maintainAspectRatio: false,
       interaction: { mode: "index", intersect: false },
-      scales: { y: { min: 0, max: 100, ticks: { stepSize: 20 } } },
-      plugins: { legend: { display: true }, tooltip: { enabled: true } }
+      scales: {
+        y: { min: 0, max: 100, ticks: { stepSize: 20 } }
+      },
+      plugins: {
+        legend: { display: true },
+        tooltip: { enabled: true }
+      }
     }
   });
 }
@@ -584,32 +700,60 @@ function renderChart() {
 function renderChartSummary() {
   const summary = document.getElementById("chartSummary");
   if (!summary) return;
-  const visibleMetrics = getAllMetrics().filter(m => state.visibleMetricIds.includes(m.id));
-  summary.innerHTML = visibleMetrics.map((metric, index) => {
-    const color = SERIES_COLORS[index % SERIES_COLORS.length];
-    const dashed = SERIES_STYLES[index % SERIES_STYLES.length].length ? " dashed" : "";
-    return `<div class="chart-summary-item"><span class="chart-line-swatch${dashed}" style="border-top-color:${color}"></span><span>${metric.label}</span></div>`;
-  }).join("") + '<div class="access-note">色だけでなく、線のパターンでも区別できるようにしています。</div>';
+
+  const visibleMetrics = getAllMetrics().filter((m) => state.visibleMetricIds.includes(m.id));
+  summary.innerHTML =
+    visibleMetrics
+      .map((metric, index) => {
+        const color = SERIES_COLORS[index % SERIES_COLORS.length];
+        const dashed = SERIES_STYLES[index % SERIES_STYLES.length].length ? " dashed" : "";
+        return `<div class="chart-summary-item"><span class="chart-line-swatch${dashed}" style="border-top-color:${color}"></span><span>${metric.label}</span></div>`;
+      })
+      .join("") +
+    '<div class="access-note">色だけでなく、線のパターンでも区別できるようにしています。</div>';
 }
 
 function renderWeeklySummary() {
   const card = document.getElementById("weeklySummaryCard");
-  const recent7 = [...state.records].sort((a, b) => a.date.localeCompare(b.date)).slice(-7);
-  const previous7 = [...state.records].sort((a, b) => a.date.localeCompare(b.date)).slice(-14, -7);
+  const sorted = [...state.records].sort((a, b) =>
+    `${a.date} ${a.clockTime || ""}`.localeCompare(`${b.date} ${b.clockTime || ""}`)
+  );
+  const recent7 = sorted.slice(-7);
+  const previous7 = sorted.slice(-14, -7);
+
   const delta = (metricId) => {
     if (!recent7.length || !previous7.length) return "-";
     return averageFor(recent7, metricId) - averageFor(previous7, metricId);
   };
+
   card.innerHTML = `
     <div class="card-header">
       <h3 class="card-title">週次サマリー</h3>
-      <p class="card-description">直近7日とその前の7日を比較します。</p>
+      <p class="card-description">直近7件とその前の7件を比較します。</p>
     </div>
     <div class="card-content">
       <div class="analysis-stack">
-        <div class="analysis-row"><div><div class="analysis-label">しんどさ差分</div><div class="analysis-sub">直近7日 - 前週</div></div><div class="analysis-sub">${delta("fatigue")}</div></div>
-        <div class="analysis-row"><div><div class="analysis-label">関心差分</div><div class="analysis-sub">直近7日 - 前週</div></div><div class="analysis-sub">${delta("interest")}</div></div>
-        <div class="analysis-row"><div><div class="analysis-label">気分の重さ差分</div><div class="analysis-sub">直近7日 - 前週</div></div><div class="analysis-sub">${delta("heaviness")}</div></div>
+        <div class="analysis-row">
+          <div>
+            <div class="analysis-label">しんどさ差分</div>
+            <div class="analysis-sub">直近7件 - その前の7件</div>
+          </div>
+          <div class="analysis-sub">${delta("fatigue")}</div>
+        </div>
+        <div class="analysis-row">
+          <div>
+            <div class="analysis-label">関心差分</div>
+            <div class="analysis-sub">直近7件 - その前の7件</div>
+          </div>
+          <div class="analysis-sub">${delta("interest")}</div>
+        </div>
+        <div class="analysis-row">
+          <div>
+            <div class="analysis-label">気分の重さ差分</div>
+            <div class="analysis-sub">直近7件 - その前の7件</div>
+          </div>
+          <div class="analysis-sub">${delta("heaviness")}</div>
+        </div>
       </div>
     </div>
   `;
@@ -617,28 +761,40 @@ function renderWeeklySummary() {
 
 function renderBehaviorComparison() {
   const card = document.getElementById("behaviorComparisonCard");
-  const outings = state.records.filter(r => r.wentOut);
-  const nonOutings = state.records.filter(r => !r.wentOut);
-  const rows = DEFAULT_METRICS.map(metric => `
+  const outings = state.records.filter((r) => r.wentOut);
+  const nonOutings = state.records.filter((r) => !r.wentOut);
+
+  const rows = DEFAULT_METRICS
+    .map(
+      (metric) => `
     <tr>
       <td>${metric.label}</td>
       <td style="text-align:center;">${averageFor(outings, metric.id)}</td>
       <td style="text-align:center;">${averageFor(nonOutings, metric.id)}</td>
     </tr>
-  `).join("");
+  `
+    )
+    .join("");
+
   card.innerHTML = `
     <div class="card-header">
-      <h3 class="card-title">外出日と非外出日の比較</h3>
-      <p class="card-description">30分以上外出した日と、そうでない日の平均値を比較します。</p>
+      <h3 class="card-title">外出記録と非外出記録の比較</h3>
+      <p class="card-description">30分以上外出した記録と、そうでない記録の平均値を比較します。</p>
     </div>
     <div class="card-content">
       <div class="record-badges" style="margin-top:0; margin-bottom:12px;">
-        <span class="badge badge-muted">外出日数 ${outings.length}</span>
-        <span class="badge badge-muted">非外出日数 ${nonOutings.length}</span>
+        <span class="badge badge-muted">外出記録数 ${outings.length}</span>
+        <span class="badge badge-muted">非外出記録数 ${nonOutings.length}</span>
       </div>
       <div style="overflow:auto;">
         <table class="table-like">
-          <thead><tr><th>項目</th><th style="text-align:center;">外出日</th><th style="text-align:center;">非外出日</th></tr></thead>
+          <thead>
+            <tr>
+              <th>項目</th>
+              <th style="text-align:center;">外出記録</th>
+              <th style="text-align:center;">非外出記録</th>
+            </tr>
+          </thead>
           <tbody>${rows}</tbody>
         </table>
       </div>
@@ -649,20 +805,28 @@ function renderBehaviorComparison() {
 function renderWeekdayAnalysis() {
   const wrap = document.getElementById("weekdayAnalysis");
   const groups = {};
-  state.records.forEach(record => {
+
+  state.records.forEach((record) => {
     const key = weekdayJa(record.date);
     groups[key] = groups[key] || [];
     groups[key].push(record);
   });
+
   const order = ["月", "火", "水", "木", "金", "土", "日"];
-  const rows = order.filter(day => groups[day]?.length).map(day => `
+  const rows = order
+    .filter((day) => groups[day]?.length)
+    .map(
+      (day) => `
     <tr>
       <td>${day}</td>
       <td>${averageFor(groups[day], "fatigue")}</td>
       <td>${averageFor(groups[day], "interest")}</td>
       <td>${averageFor(groups[day], "heaviness")}</td>
     </tr>
-  `).join("");
+  `
+    )
+    .join("");
+
   wrap.innerHTML = rows
     ? `<div style="overflow:auto;"><table class="table-like"><thead><tr><th>曜日</th><th>しんどさ</th><th>関心</th><th>重さ</th></tr></thead><tbody>${rows}</tbody></table></div>`
     : `<p class="empty-text">まだ分析できる記録がありません。</p>`;
@@ -671,19 +835,27 @@ function renderWeekdayAnalysis() {
 function renderTimeAnalysis() {
   const wrap = document.getElementById("timeAnalysis");
   const buckets = { morning: [], afternoon: [], night: [] };
-  state.records.forEach(record => {
+
+  state.records.forEach((record) => {
     const key = record.timeBucket || "morning";
     if (buckets[key]) buckets[key].push(record);
   });
+
   const labels = { morning: "朝", afternoon: "昼", night: "夜" };
-  const rows = Object.entries(labels).filter(([key]) => buckets[key].length).map(([key, label]) => `
+  const rows = Object.entries(labels)
+    .filter(([key]) => buckets[key].length)
+    .map(
+      ([key, label]) => `
     <tr>
       <td>${label}</td>
       <td>${averageFor(buckets[key], "fatigue")}</td>
       <td>${averageFor(buckets[key], "interest")}</td>
       <td>${averageFor(buckets[key], "heaviness")}</td>
     </tr>
-  `).join("");
+  `
+    )
+    .join("");
+
   wrap.innerHTML = rows
     ? `<div style="overflow:auto;"><table class="table-like"><thead><tr><th>時間帯</th><th>しんどさ</th><th>関心</th><th>重さ</th></tr></thead><tbody>${rows}</tbody></table></div>`
     : `<p class="empty-text">時間帯の記録がまだありません。</p>`;
@@ -692,22 +864,31 @@ function renderTimeAnalysis() {
 function renderTagAnalysis() {
   const wrap = document.getElementById("tagAnalysis");
   const tagMap = {};
-  state.records.forEach(record => {
-    (Array.isArray(record.tags) ? record.tags : []).forEach(tag => {
+
+  state.records.forEach((record) => {
+    (Array.isArray(record.tags) ? record.tags : []).forEach((tag) => {
       tagMap[tag] = tagMap[tag] || [];
       tagMap[tag].push(record);
     });
   });
-  const topTags = Object.entries(tagMap).sort((a, b) => b[1].length - a[1].length).slice(0, 8);
+
+  const topTags = Object.entries(tagMap)
+    .sort((a, b) => b[1].length - a[1].length)
+    .slice(0, 8);
+
   wrap.innerHTML = topTags.length
-    ? `<div class="analysis-stack">${topTags.map(([tag, records]) => `
+    ? `<div class="analysis-stack">${topTags
+        .map(
+          ([tag, records]) => `
       <div class="analysis-row">
         <div>
           <div class="analysis-label">#${escapeHtml(tag)}</div>
           <div class="analysis-sub">使用回数 ${records.length}</div>
         </div>
         <div class="analysis-sub">関心 ${averageFor(records, "interest")} / しんどさ ${averageFor(records, "fatigue")}</div>
-      </div>`).join("")}</div>`
+      </div>`
+        )
+        .join("")}</div>`
     : `<p class="empty-text">タグがまだありません。</p>`;
 }
 
@@ -717,37 +898,59 @@ function renderCorrelationAnalysis() {
     wrap.innerHTML = `<p class="empty-text">追加項目があると、基礎指標との動きの近さを見られます。</p>`;
     return;
   }
-  const html = state.customMetrics.slice(0, 6).map(metric => {
-    const high = state.records.filter(r => Number(r.scores?.[metric.id] || 0) >= 60);
-    const low = state.records.filter(r => Number(r.scores?.[metric.id] || 0) <= 40);
-    return `
+
+  const html = state.customMetrics
+    .slice(0, 6)
+    .map((metric) => {
+      const high = state.records.filter((r) => Number(r.scores?.[metric.id] || 0) >= 60);
+      const low = state.records.filter((r) => Number(r.scores?.[metric.id] || 0) <= 40);
+
+      return `
       <div class="analysis-row">
         <div>
           <div class="analysis-label">${metric.label}</div>
-          <div class="analysis-sub">高い日 / 低い日の関心平均</div>
+          <div class="analysis-sub">高い記録 / 低い記録の関心平均</div>
         </div>
         <div class="analysis-sub">${high.length ? averageFor(high, "interest") : "-"} / ${low.length ? averageFor(low, "interest") : "-"}</div>
       </div>
     `;
-  }).join("");
-  wrap.innerHTML = `<div class="analysis-stack">${html}</div><p class="mini-note">左が追加項目が高い日の関心平均、右が低い日の関心平均です。厳密な統計ではなく、傾向を見るための簡易表示です。</p>`;
+    })
+    .join("");
+
+  wrap.innerHTML = `<div class="analysis-stack">${html}</div><p class="mini-note">左が追加項目が高い記録の関心平均、右が低い記録の関心平均です。厳密な統計ではなく、傾向を見るための簡易表示です。</p>`;
 }
 
 function renderRecords() {
   const wrap = document.getElementById("recordsWrap");
-  const sorted = [...state.records].sort((a, b) => b.date.localeCompare(a.date));
+  const sorted = [...state.records].sort((a, b) =>
+    `${b.date} ${b.clockTime || ""}`.localeCompare(`${a.date} ${a.clockTime || ""}`)
+  );
+
   if (!sorted.length) {
     wrap.innerHTML = `<div class="card"><div class="card-content"><div class="empty-state">まだ記録がありません。入力タブから最初の1件を保存してください。</div></div></div>`;
     return;
   }
 
   wrap.innerHTML = "";
-  sorted.forEach(record => {
+  sorted.forEach((record) => {
     const card = document.createElement("div");
     card.className = "card";
-    const metricBadges = getAllMetrics().map(metric => `<span class="badge badge-muted">${metric.label} ${record.scores?.[metric.id] ?? "-"}</span>`).join("");
-    const tagBadges = (record.tags || []).map(tag => `<span class="badge badge-muted">#${escapeHtml(tag)}</span>`).join("");
-    const timeLabel = record.timeBucket === "morning" ? "朝" : record.timeBucket === "afternoon" ? "昼" : "夜";
+
+    const metricBadges = getAllMetrics()
+      .map((metric) => `<span class="badge badge-muted">${metric.label} ${record.scores?.[metric.id] ?? "-"}</span>`)
+      .join("");
+
+    const tagBadges = (record.tags || [])
+      .map((tag) => `<span class="badge badge-muted">#${escapeHtml(tag)}</span>`)
+      .join("");
+
+    const timeLabel =
+      record.timeBucket === "morning"
+        ? "朝"
+        : record.timeBucket === "afternoon"
+        ? "昼"
+        : "夜";
+
     card.innerHTML = `
       <div class="card-content">
         <div class="record-row">
@@ -757,15 +960,19 @@ function renderRecords() {
               ${record.wentOut ? `<span class="badge">外出あり</span>` : ""}
               <span class="badge badge-muted">${timeLabel}</span>
             </div>
+            <p class="record-meta">${record.clockTime || ""}</p>
             <div class="record-badges">${metricBadges}${tagBadges}</div>
             ${(record.cbt?.automaticThought || record.memo) ? `<p class="record-preview">${escapeHtml(record.cbt?.automaticThought || record.memo)}</p>` : ""}
           </button>
-          <button class="btn btn-outline delete-btn" type="button">削除</button>
+          <div class="hero-actions">
+            <button class="btn btn-outline delete-btn" type="button">削除</button>
+          </div>
         </div>
       </div>
     `;
+
     card.querySelector(".record-main").addEventListener("click", () => loadRecordIntoForm(record));
-    card.querySelector(".delete-btn").addEventListener("click", () => deleteRecord(record.date));
+    card.querySelector(".delete-btn").addEventListener("click", () => deleteRecord(record.id));
     wrap.appendChild(card);
   });
 }
@@ -774,7 +981,8 @@ function renderTagPresets() {
   const wrap = document.getElementById("tagPresetWrap");
   if (!wrap) return;
   wrap.innerHTML = "";
-  TAG_PRESETS.forEach((tag) => {
+
+  state.tagPresets.forEach((tag) => {
     const btn = document.createElement("button");
     btn.type = "button";
     const active = state.tags.includes(tag);
@@ -782,14 +990,15 @@ function renderTagPresets() {
     btn.textContent = tag;
     btn.onclick = () => {
       if (state.tags.includes(tag)) {
-        state.tags = state.tags.filter(t => t !== tag);
+        state.tags = state.tags.filter((t) => t !== tag);
+        announceToScreenReader(`${tag}タグを削除しました`);
       } else {
         state.tags = [...state.tags, tag];
+        announceToScreenReader(`${tag}タグを追加しました`);
       }
       const tagsEl = document.getElementById("recordTags");
       if (tagsEl) tagsEl.value = state.tags.join(", ");
       renderTagPresets();
-      announceToScreenReader(`${tag}タグを${state.tags.includes(tag) ? "追加" : "削除"}しました`);
     };
     wrap.appendChild(btn);
   });
@@ -797,8 +1006,10 @@ function renderTagPresets() {
 
 function renderPresetMetrics() {
   const wrap = document.getElementById("presetMetricWrap");
+  if (!wrap) return;
   wrap.innerHTML = "";
-  PRESET_METRICS.forEach(metric => {
+
+  PRESET_METRICS.forEach((metric) => {
     const btn = document.createElement("button");
     btn.type = "button";
     btn.className = "btn btn-outline chip-btn";
@@ -810,12 +1021,15 @@ function renderPresetMetrics() {
 
 function renderCustomMetrics() {
   const wrap = document.getElementById("customMetricsWrap");
+  if (!wrap) return;
+
   if (!state.customMetrics.length) {
     wrap.innerHTML = `<p class="empty-text">まだ追加項目はありません。</p>`;
     return;
   }
+
   wrap.innerHTML = "";
-  state.customMetrics.forEach(metric => {
+  state.customMetrics.forEach((metric) => {
     const row = document.createElement("div");
     row.className = "custom-metric-row";
     row.innerHTML = `
@@ -830,6 +1044,23 @@ function renderCustomMetrics() {
   });
 }
 
+function renderTagTemplateSettings() {
+  const wrap = document.getElementById("tagTemplateWrap");
+  if (!wrap) return;
+
+  wrap.innerHTML = "";
+  state.tagPresets.forEach((tag) => {
+    const row = document.createElement("div");
+    row.className = "tag-template-row";
+    row.innerHTML = `
+      <span class="badge badge-muted">#${escapeHtml(tag)}</span>
+      <button type="button" class="btn btn-outline subtle-btn">削除</button>
+    `;
+    row.querySelector("button").onclick = () => removeTagTemplate(tag);
+    wrap.appendChild(row);
+  });
+}
+
 function renderTabs() {
   document.querySelectorAll(".tab").forEach((btn, index) => {
     const selected = btn.dataset.tab === state.activeTab;
@@ -840,7 +1071,8 @@ function renderTabs() {
     btn.id = `${btn.dataset.tab}-tab-${index}`;
     btn.setAttribute("aria-controls", `${btn.dataset.tab}-panel`);
   });
-  document.querySelectorAll(".tab-panel").forEach(panel => {
+
+  document.querySelectorAll(".tab-panel").forEach((panel) => {
     const active = panel.dataset.panel === state.activeTab;
     panel.classList.toggle("active", active);
     panel.setAttribute("role", "tabpanel");
@@ -862,6 +1094,7 @@ function bindGlobal() {
       }
       announceToScreenReader(`${btn.textContent}タブを開きました`);
     });
+
     btn.addEventListener("keydown", (e) => {
       const currentIndex = tabs.indexOf(btn);
       if (e.key === "ArrowRight" || e.key === "ArrowDown") {
@@ -886,12 +1119,17 @@ function bindGlobal() {
   document.getElementById("csvTopBtn").onclick = downloadCsv;
   document.getElementById("csvBottomBtn").onclick = downloadCsv;
   document.getElementById("jsonExportBtn").onclick = exportJson;
-  document.getElementById("jsonImportTriggerBtn").onclick = () => document.getElementById("jsonImportInput").click();
+
+  document.getElementById("jsonImportTriggerBtn").onclick = () => {
+    document.getElementById("jsonImportInput").click();
+  };
+
   document.getElementById("jsonImportInput").onchange = (e) => {
     const file = e.target.files?.[0];
     if (file) importJson(file);
     e.target.value = "";
   };
+
   document.getElementById("addMetricBtn").onclick = () => {
     addCustomMetric(
       document.getElementById("newMetricName").value,
@@ -900,6 +1138,15 @@ function bindGlobal() {
     document.getElementById("newMetricName").value = "";
     document.getElementById("newMetricDescription").value = "";
   };
+
+  const addTagTemplateBtn = document.getElementById("addTagTemplateBtn");
+  if (addTagTemplateBtn) {
+    addTagTemplateBtn.onclick = () => {
+      const input = document.getElementById("newTagTemplate");
+      addTagTemplate(input.value);
+      input.value = "";
+    };
+  }
 }
 
 function renderAll() {
@@ -907,7 +1154,6 @@ function renderAll() {
   renderTabs();
   renderTopForm();
   renderScoreGrid();
-  renderCBTForm();
   renderMetricToggleWrap();
   renderChartSummary();
   renderWeeklySummary();
@@ -920,6 +1166,7 @@ function renderAll() {
   renderTagPresets();
   renderPresetMetrics();
   renderCustomMetrics();
+  renderTagTemplateSettings();
   if (state.activeTab === "graph") renderChart();
 }
 

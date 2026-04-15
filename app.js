@@ -629,8 +629,8 @@ function renderTopForm() {
     };
   }
 
-  if (contextCard) contextCard.classList.toggle("is-hidden-quick", state.quickMode);
-  if (cbtCard) cbtCard.classList.toggle("is-hidden-quick", state.quickMode);
+if (contextCard) contextCard.classList.toggle("is-hidden-quick", !state.quickMode);
+if (cbtCard) cbtCard.classList.toggle("is-hidden-quick", !state.quickMode);
 
   let quickNote = document.getElementById("quickNote");
   if (!quickNote) {
@@ -642,9 +642,9 @@ function renderTopForm() {
     if (panel && scoreGrid) panel.insertBefore(quickNote, scoreGrid);
   }
 
-  quickNote.textContent = state.quickMode
-    ? "クイック入力では、日付・時刻・外出・数値だけをすばやく記録できます。記録条件とCBTメモは隠れます。"
-    : "通常入力では、記録条件とCBTメモも含めて残せます。";
+quickNote.textContent = state.quickMode
+  ? "クイック入力では、記録状況とCBTメモも含めて入力できます。"
+  : "通常入力では、CBTメモ以下を隠して簡潔に記録できます。";
 
   if (!state.saveNotice) {
     saveBtn.textContent = state.currentEntryId ? "この記録を更新する" : "この内容で保存する";

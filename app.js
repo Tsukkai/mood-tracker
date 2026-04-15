@@ -1,7 +1,7 @@
-const RECORDS_KEY = "mood-tracker-records-v4";
-const CUSTOM_METRICS_KEY = "mood-tracker-custom-metrics-v4";
-const VISIBLE_METRICS_KEY = "mood-tracker-visible-metrics-v4";
-const TAG_PRESETS_KEY = "mood-tracker-tag-presets-v2";
+const RECORDS_KEY = "mood-tracker-records-v5";
+const CUSTOM_METRICS_KEY = "mood-tracker-custom-metrics-v5";
+const VISIBLE_METRICS_KEY = "mood-tracker-visible-metrics-v5";
+const TAG_PRESETS_KEY = "mood-tracker-tag-presets-v3";
 
 const DEFAULT_METRICS = [
   { id: "fatigue", label: "しんどさ", description: "心身のつらさ。高いほどきつい。" },
@@ -73,7 +73,7 @@ let state = {
   },
   memo: "",
   activeTab: "input",
-  quickMode: false,
+  quickMode: true,
   chart: null,
   saveNotice: "",
   saveNoticeTimer: null
@@ -497,6 +497,19 @@ function importJson(file) {
   reader.readAsText(file);
 }
 
+function buildMiniBar(label, value) {
+  const safeValue = value === "-" ? 0 : Number(value) || 0;
+  return `
+    <div style="display:grid;grid-template-columns:56px 1fr 40px;gap:10px;align-items:center;margin-top:8px;">
+      <div style="font-size:13px;color:#344054;font-weight:700;">${escapeHtml(label)}</div>
+      <div style="height:10px;background:#e5e7eb;border-radius:999px;overflow:hidden;">
+        <div style="height:100%;width:${safeValue}%;background:#0b1730;border-radius:999px;"></div>
+      </div>
+      <div style="font-size:13px;color:#475467;text-align:right;">${value}</div>
+    </div>
+  `;
+}
+
 function renderStats() {
   const grid = document.getElementById("statsGrid");
   const recent7 = [...state.records]
@@ -593,11 +606,8 @@ function renderCBTForm() {
     if (!el) return;
     el.value = key === "memo" ? state.memo : state.cbt[key];
     el.oninput = (e) => {
-      if (key === "memo") {
-        state.memo = e.target.value;
-      } else {
-        state.cbt[key] = e.target.value;
-      }
+      if (key === "memo") state.memo = e.target.value;
+      else state.cbt[key] = e.target.value;
     };
   };
 
@@ -639,9 +649,7 @@ function renderTopForm() {
   wentOutBtn.onclick = () => {
     state.wentOut = !state.wentOut;
     renderTopForm();
-    announceToScreenReader(
-      state.wentOut ? "30分以上外出したに設定しました" : "外出なしに設定しました"
-    );
+    announceToScreenReader(state.wentOut ? "30分以上外出したに設定しました" : "外出なしに設定しました");
   };
 
   quickBtn.textContent = state.quickMode ? "クイック入力: ON" : "クイック入力: OFF";
@@ -651,8 +659,8 @@ function renderTopForm() {
     renderTopForm();
     announceToScreenReader(
       state.quickMode
-        ? "クイック入力をオンにしました。記録条件とCBTメモを表示します。"
-        : "クイック入力をオフにしました。記録条件とCBTメモを隠します。"
+        ? "クイック入力をオンにしました。スライダー中心の簡易入力です。"
+        : "クイック入力をオフにしました。時間帯、タグ、CBTメモを表示します。"
     );
   };
 
@@ -670,13 +678,13 @@ function renderTopForm() {
   }
 
   if (contextCard) {
-    if (state.quickMode) contextCard.classList.remove("is-hidden-quick");
-    else contextCard.classList.add("is-hidden-quick");
+    if (state.quickMode) contextCard.classList.add("is-hidden-quick");
+    else contextCard.classList.remove("is-hidden-quick");
   }
 
   if (cbtCard) {
-    if (state.quickMode) cbtCard.classList.remove("is-hidden-quick");
-    else cbtCard.classList.add("is-hidden-quick");
+    if (state.quickMode) cbtCard.classList.add("is-hidden-quick");
+    else cbtCard.classList.remove("is-hidden-quick");
   }
 
   let quickNote = document.getElementById("quickNote");
@@ -690,8 +698,8 @@ function renderTopForm() {
   }
 
   quickNote.textContent = state.quickMode
-    ? "ONでは、記録条件とCBTメモも表示して詳しく入力できます。"
-    : "OFFでは、記録条件とCBTメモを隠して簡潔に記録できます。";
+    ? "ONでは、スライダー群を中心に素早く記録できます。時間帯、タグ、CBTメモは隠れます。"
+    : "OFFでは、時間帯、タグ、CBTメモも含めて詳しく記録できます。";
 
   if (!state.saveNotice) {
     saveBtn.textContent = state.currentEntryId ? "この記録を更新する" : "この内容で保存する";
@@ -888,30 +896,22 @@ function renderWeekdayAnalysis() {
   const order = ["月", "火", "水", "木", "金", "土", "日"];
   const rows = order
     .filter((day) => groups[day]?.length)
-    .map(
-      (day) => `
-    <tr>
-      <td>${day}</td>
-      <td>${averageFor(groups[day], "fatigue")}</td>
-      <td>${averageFor(groups[day], "interest")}</td>
-      <td>${averageFor(groups[day], "heaviness")}</td>
-    </tr>
-  `
-    )
+    .map((day) => {
+      const fatigue = averageFor(groups[day], "fatigue");
+      const interest = averageFor(groups[day], "interest");
+      const heaviness = averageFor(groups[day], "heaviness");
+      return `
+        <div style="padding:10px 0;border-top:1px solid #d7dde5;">
+          <div style="font-weight:700;color:#344054;margin-bottom:6px;">${day}</div>
+          ${buildMiniBar("しんどさ", fatigue)}
+          ${buildMiniBar("関心", interest)}
+          ${buildMiniBar("重さ", heaviness)}
+        </div>
+      `;
+    })
     .join("");
 
-  wrap.innerHTML = rows
-    ? `<div style="overflow:auto;"><table class="table-like"><thead><tr><th>曜日</th><th>しんどさ</th><th>関心</th><th>重さ</th></tr></thead><tbody>${rows}</tbody></table></div>`
-    : `<p class="empty-text">まだ分析できる記録がありません。</p>`;
-
-<div class="mini-bar-row">
-  <div class="mini-bar-label">月</div>
-  <div class="mini-bar-track">
-    <div class="mini-bar-fill" style="width: 62%;"></div>
-  </div>
-  <div class="mini-bar-value">62</div>
-</div>
-  
+  wrap.innerHTML = rows || `<p class="empty-text">まだ分析できる記録がありません。</p>`;
 }
 
 function renderTimeAnalysis() {
@@ -924,23 +924,25 @@ function renderTimeAnalysis() {
   });
 
   const labels = { morning: "朝", afternoon: "昼", night: "夜" };
+
   const rows = Object.entries(labels)
     .filter(([key]) => buckets[key].length)
-    .map(
-      ([key, label]) => `
-    <tr>
-      <td>${label}</td>
-      <td>${averageFor(buckets[key], "fatigue")}</td>
-      <td>${averageFor(buckets[key], "interest")}</td>
-      <td>${averageFor(buckets[key], "heaviness")}</td>
-    </tr>
-  `
-    )
+    .map(([key, label]) => {
+      const fatigue = averageFor(buckets[key], "fatigue");
+      const interest = averageFor(buckets[key], "interest");
+      const heaviness = averageFor(buckets[key], "heaviness");
+      return `
+        <div style="padding:10px 0;border-top:1px solid #d7dde5;">
+          <div style="font-weight:700;color:#344054;margin-bottom:6px;">${label}</div>
+          ${buildMiniBar("しんどさ", fatigue)}
+          ${buildMiniBar("関心", interest)}
+          ${buildMiniBar("重さ", heaviness)}
+        </div>
+      `;
+    })
     .join("");
 
-  wrap.innerHTML = rows
-    ? `<div style="overflow:auto;"><table class="table-like"><thead><tr><th>時間帯</th><th>しんどさ</th><th>関心</th><th>重さ</th></tr></thead><tbody>${rows}</tbody></table></div>`
-    : `<p class="empty-text">時間帯の記録がまだありません。</p>`;
+  wrap.innerHTML = rows || `<p class="empty-text">時間帯の記録がまだありません。</p>`;
 }
 
 function renderTagAnalysis() {
@@ -958,20 +960,24 @@ function renderTagAnalysis() {
     .sort((a, b) => b[1].length - a[1].length)
     .slice(0, 8);
 
-  wrap.innerHTML = topTags.length
-    ? `<div class="analysis-stack">${topTags
-        .map(
-          ([tag, records]) => `
-      <div class="analysis-row">
-        <div>
-          <div class="analysis-label">#${escapeHtml(tag)}</div>
-          <div class="analysis-sub">使用回数 ${records.length}</div>
+  const html = topTags
+    .map(([tag, records]) => {
+      const interest = averageFor(records, "interest");
+      const fatigue = averageFor(records, "fatigue");
+      const heaviness = averageFor(records, "heaviness");
+      return `
+        <div style="padding:10px 0;border-top:1px solid #d7dde5;">
+          <div style="font-weight:700;color:#344054;margin-bottom:4px;">#${escapeHtml(tag)}</div>
+          <div style="font-size:13px;color:#475467;margin-bottom:6px;">使用回数 ${records.length}</div>
+          ${buildMiniBar("関心", interest)}
+          ${buildMiniBar("しんどさ", fatigue)}
+          ${buildMiniBar("重さ", heaviness)}
         </div>
-        <div class="analysis-sub">関心 ${averageFor(records, "interest")} / しんどさ ${averageFor(records, "fatigue")}</div>
-      </div>`
-        )
-        .join("")}</div>`
-    : `<p class="empty-text">タグがまだありません。</p>`;
+      `;
+    })
+    .join("");
+
+  wrap.innerHTML = html || `<p class="empty-text">タグがまだありません。</p>`;
 }
 
 function renderCorrelationAnalysis() {

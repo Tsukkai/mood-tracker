@@ -1,7 +1,7 @@
-const RECORDS_KEY = "mood-tracker-records-v3";
-const CUSTOM_METRICS_KEY = "mood-tracker-custom-metrics-v3";
-const VISIBLE_METRICS_KEY = "mood-tracker-visible-metrics-v3";
-const TAG_PRESETS_KEY = "mood-tracker-tag-presets-v1";
+const RECORDS_KEY = "mood-tracker-records-v4";
+const CUSTOM_METRICS_KEY = "mood-tracker-custom-metrics-v4";
+const VISIBLE_METRICS_KEY = "mood-tracker-visible-metrics-v4";
+const TAG_PRESETS_KEY = "mood-tracker-tag-presets-v2";
 
 const DEFAULT_METRICS = [
   { id: "fatigue", label: "しんどさ", description: "心身のつらさ。高いほどきつい。" },
@@ -34,7 +34,11 @@ let state = {
   wentOut: false,
   timeBucket: "morning",
   tags: [],
-  cbt: { situation: "", automaticThought: "", adaptiveThought: "" },
+  cbt: {
+    situation: "",
+    automaticThought: "",
+    adaptiveThought: ""
+  },
   memo: "",
   activeTab: "input",
   quickMode: false,
@@ -183,12 +187,12 @@ function resetForm() {
   state.wentOut = false;
   state.timeBucket = "morning";
   state.tags = [];
-  state.cbt = { situation: "", automaticThought: "", adaptiveThought: "" };
+  state.cbt = {
+    situation: "",
+    automaticThought: "",
+    adaptiveThought: ""
+  };
   state.memo = "";
-}
-
-function selectedRecord() {
-  return state.records.find((r) => r.id === state.currentEntryId) || null;
 }
 
 function averageFor(records, metricId) {
@@ -549,6 +553,26 @@ function renderScoreGrid() {
   getAllMetrics().forEach((metric) => grid.appendChild(createMetricCard(metric)));
 }
 
+function renderCBTForm() {
+  const bind = (id, key) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.value = key === "memo" ? state.memo : state.cbt[key];
+    el.oninput = (e) => {
+      if (key === "memo") {
+        state.memo = e.target.value;
+      } else {
+        state.cbt[key] = e.target.value;
+      }
+    };
+  };
+
+  bind("situation", "situation");
+  bind("automaticThought", "automaticThought");
+  bind("adaptiveThought", "adaptiveThought");
+  bind("memo", "memo");
+}
+
 function renderTopForm() {
   const dateEl = document.getElementById("recordDate");
   const clockEl = document.getElementById("recordClockTime");
@@ -558,6 +582,7 @@ function renderTopForm() {
   const timeBucketEl = document.getElementById("recordTimeBucket");
   const tagsEl = document.getElementById("recordTags");
   const contextCard = document.getElementById("contextCard");
+  const cbtCard = document.getElementById("cbtCard");
 
   dateEl.value = state.currentDate;
   if (clockEl) clockEl.value = state.currentClockTime || "12:00";
@@ -605,6 +630,7 @@ function renderTopForm() {
   }
 
   if (contextCard) contextCard.classList.toggle("is-hidden-quick", state.quickMode);
+  if (cbtCard) cbtCard.classList.toggle("is-hidden-quick", state.quickMode);
 
   let quickNote = document.getElementById("quickNote");
   if (!quickNote) {
@@ -617,8 +643,8 @@ function renderTopForm() {
   }
 
   quickNote.textContent = state.quickMode
-    ? "クイック入力では、日付・時刻・外出・数値だけをすばやく記録できます。記録条件は隠れます。"
-    : "通常入力では、記録条件も含めて残せます。";
+    ? "クイック入力では、日付・時刻・外出・数値だけをすばやく記録できます。記録条件とCBTメモは隠れます。"
+    : "通常入力では、記録条件とCBTメモも含めて残せます。";
 
   if (!state.saveNotice) {
     saveBtn.textContent = state.currentEntryId ? "この記録を更新する" : "この内容で保存する";
@@ -951,6 +977,8 @@ function renderRecords() {
         ? "昼"
         : "夜";
 
+    const preview = record.cbt?.automaticThought || record.memo;
+
     card.innerHTML = `
       <div class="card-content">
         <div class="record-row">
@@ -962,7 +990,7 @@ function renderRecords() {
             </div>
             <p class="record-meta">${record.clockTime || ""}</p>
             <div class="record-badges">${metricBadges}${tagBadges}</div>
-            ${(record.cbt?.automaticThought || record.memo) ? `<p class="record-preview">${escapeHtml(record.cbt?.automaticThought || record.memo)}</p>` : ""}
+            ${preview ? `<p class="record-preview">${escapeHtml(preview)}</p>` : ""}
           </button>
           <div class="hero-actions">
             <button class="btn btn-outline delete-btn" type="button">削除</button>
@@ -1154,6 +1182,7 @@ function renderAll() {
   renderTabs();
   renderTopForm();
   renderScoreGrid();
+  renderCBTForm();
   renderMetricToggleWrap();
   renderChartSummary();
   renderWeeklySummary();

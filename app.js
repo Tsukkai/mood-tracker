@@ -1,7 +1,7 @@
-const RECORDS_KEY = "mood-tracker-records-v5";
-const CUSTOM_METRICS_KEY = "mood-tracker-custom-metrics-v5";
-const VISIBLE_METRICS_KEY = "mood-tracker-visible-metrics-v5";
-const TAG_PRESETS_KEY = "mood-tracker-tag-presets-v3";
+const RECORDS_KEY = "mood-tracker-records-v6";
+const CUSTOM_METRICS_KEY = "mood-tracker-custom-metrics-v6";
+const VISIBLE_METRICS_KEY = "mood-tracker-visible-metrics-v6";
+const TAG_PRESETS_KEY = "mood-tracker-tag-presets-v4";
 
 const DEFAULT_METRICS = [
   { id: "fatigue", label: "しんどさ", description: "心身のつらさ。高いほどきつい。" },
@@ -348,6 +348,7 @@ function addCustomMetric(label, description) {
   state.customMetrics.push(metric);
   state.visibleMetricIds.push(id);
   state.currentScores[id] = 50;
+
   state.records = state.records.map((r) => ({
     ...r,
     scores: { ...r.scores, [id]: r.scores?.[id] ?? 50 }
@@ -500,7 +501,7 @@ function importJson(file) {
 function buildMiniBar(label, value) {
   const safeValue = value === "-" ? 0 : Number(value) || 0;
   return `
-    <div style="display:grid;grid-template-columns:56px 1fr 40px;gap:10px;align-items:center;margin-top:8px;">
+    <div style="display:grid;grid-template-columns:64px 1fr 42px;gap:10px;align-items:center;margin-top:8px;">
       <div style="font-size:13px;color:#344054;font-weight:700;">${escapeHtml(label)}</div>
       <div style="height:10px;background:#e5e7eb;border-radius:999px;overflow:hidden;">
         <div style="height:100%;width:${safeValue}%;background:#0b1730;border-radius:999px;"></div>
@@ -526,14 +527,14 @@ function renderStats() {
   grid.innerHTML = stats
     .map(
       ([title, value, sub]) => `
-    <div class="card">
-      <div class="card-content">
-        <div class="stat-title">${title}</div>
-        <div class="stat-value">${value}</div>
-        <div class="stat-sub">${sub}</div>
+      <div class="card">
+        <div class="card-content">
+          <div class="stat-title">${title}</div>
+          <div class="stat-value">${value}</div>
+          <div class="stat-sub">${sub}</div>
+        </div>
       </div>
-    </div>
-  `
+    `
     )
     .join("");
 }
@@ -549,10 +550,29 @@ function createMetricCard(metric) {
           <p class="score-title" id="label-${metric.id}">${metric.label}</p>
           <p class="score-description" id="desc-${metric.id}">${metric.description}</p>
         </div>
-        <input class="input score-number-input" aria-labelledby="label-${metric.id}" aria-describedby="desc-${metric.id}" type="number" min="0" max="100" step="1" inputmode="numeric" value="${value}" />
+        <input
+          class="input score-number-input"
+          aria-labelledby="label-${metric.id}"
+          aria-describedby="desc-${metric.id}"
+          type="number"
+          min="0"
+          max="100"
+          step="1"
+          inputmode="numeric"
+          value="${value}"
+        />
       </div>
       <div class="score-body">
-        <input class="score-range" aria-labelledby="label-${metric.id}" aria-describedby="desc-${metric.id}" type="range" min="0" max="100" step="1" value="${value}" />
+        <input
+          class="score-range"
+          aria-labelledby="label-${metric.id}"
+          aria-describedby="desc-${metric.id}"
+          type="range"
+          min="0"
+          max="100"
+          step="1"
+          value="${value}"
+        />
         <div class="score-buttons-grid"></div>
       </div>
     </div>
@@ -576,13 +596,10 @@ function createMetricCard(metric) {
     buttonWrap.appendChild(btn);
   });
 
-  let rafId = null;
   range.addEventListener("input", (e) => {
     const next = clampScore(e.target.value);
-    numInput.value = next;
     state.currentScores[metric.id] = next;
-    if (rafId) cancelAnimationFrame(rafId);
-    rafId = requestAnimationFrame(() => {});
+    numInput.value = next;
   });
 
   numInput.addEventListener("input", (e) => {
@@ -597,7 +614,9 @@ function createMetricCard(metric) {
 function renderScoreGrid() {
   const grid = document.getElementById("scoreGrid");
   grid.innerHTML = "";
-  getAllMetrics().forEach((metric) => grid.appendChild(createMetricCard(metric)));
+  getAllMetrics().forEach((metric) => {
+    grid.appendChild(createMetricCard(metric));
+  });
 }
 
 function renderCBTForm() {
@@ -628,14 +647,16 @@ function renderTopForm() {
   const contextCard = document.getElementById("contextCard");
   const cbtCard = document.getElementById("cbtCard");
 
-  dateEl.value = state.currentDate;
+  if (dateEl) dateEl.value = state.currentDate;
   if (clockEl) clockEl.value = state.currentClockTime || "12:00";
   if (timeBucketEl) timeBucketEl.value = state.timeBucket || "morning";
   if (tagsEl) tagsEl.value = state.tags.join(", ");
 
-  dateEl.onchange = (e) => {
-    state.currentDate = e.target.value;
-  };
+  if (dateEl) {
+    dateEl.onchange = (e) => {
+      state.currentDate = e.target.value;
+    };
+  }
 
   if (clockEl) {
     clockEl.onchange = (e) => {
@@ -643,26 +664,32 @@ function renderTopForm() {
     };
   }
 
-  wentOutBtn.textContent = state.wentOut ? "30分以上外出した" : "外出なし";
-  wentOutBtn.className = `btn ${state.wentOut ? "btn-default" : "btn-outline"}`;
-  wentOutBtn.setAttribute("aria-pressed", state.wentOut ? "true" : "false");
-  wentOutBtn.onclick = () => {
-    state.wentOut = !state.wentOut;
-    renderTopForm();
-    announceToScreenReader(state.wentOut ? "30分以上外出したに設定しました" : "外出なしに設定しました");
-  };
+  if (wentOutBtn) {
+    wentOutBtn.textContent = state.wentOut ? "30分以上外出した" : "外出なし";
+    wentOutBtn.className = `btn ${state.wentOut ? "btn-default" : "btn-outline"}`;
+    wentOutBtn.setAttribute("aria-pressed", state.wentOut ? "true" : "false");
+    wentOutBtn.onclick = () => {
+      state.wentOut = !state.wentOut;
+      renderTopForm();
+      announceToScreenReader(
+        state.wentOut ? "30分以上外出したに設定しました" : "外出なしに設定しました"
+      );
+    };
+  }
 
-  quickBtn.textContent = state.quickMode ? "クイック入力: ON" : "クイック入力: OFF";
-  quickBtn.className = `btn ${state.quickMode ? "btn-default" : "btn-outline"}`;
-  quickBtn.onclick = () => {
-    state.quickMode = !state.quickMode;
-    renderTopForm();
-    announceToScreenReader(
-      state.quickMode
-        ? "クイック入力をオンにしました。スライダー中心の簡易入力です。"
-        : "クイック入力をオフにしました。時間帯、タグ、CBTメモを表示します。"
-    );
-  };
+  if (quickBtn) {
+    quickBtn.textContent = state.quickMode ? "クイック入力: ON" : "クイック入力: OFF";
+    quickBtn.className = `btn ${state.quickMode ? "btn-default" : "btn-outline"}`;
+    quickBtn.onclick = () => {
+      state.quickMode = !state.quickMode;
+      renderTopForm();
+      announceToScreenReader(
+        state.quickMode
+          ? "クイック入力をオンにしました。スライダー中心の簡易入力です。"
+          : "クイック入力をオフにしました。記録状況とCBTメモを表示します。"
+      );
+    };
+  }
 
   if (timeBucketEl) {
     timeBucketEl.onchange = (e) => {
@@ -678,13 +705,11 @@ function renderTopForm() {
   }
 
   if (contextCard) {
-    if (state.quickMode) contextCard.classList.add("is-hidden-quick");
-    else contextCard.classList.remove("is-hidden-quick");
+    contextCard.classList.toggle("is-hidden-quick", state.quickMode);
   }
 
   if (cbtCard) {
-    if (state.quickMode) cbtCard.classList.add("is-hidden-quick");
-    else cbtCard.classList.remove("is-hidden-quick");
+    cbtCard.classList.toggle("is-hidden-quick", state.quickMode);
   }
 
   let quickNote = document.getElementById("quickNote");
@@ -698,19 +723,23 @@ function renderTopForm() {
   }
 
   quickNote.textContent = state.quickMode
-    ? "ONでは、スライダー群を中心に素早く記録できます。時間帯、タグ、CBTメモは隠れます。"
-    : "OFFでは、時間帯、タグ、CBTメモも含めて詳しく記録できます。";
+    ? "ONでは、スライダー群を中心に素早く記録できます。記録状況とCBTメモは隠れます。"
+    : "OFFでは、記録状況とCBTメモも含めて詳しく記録できます。";
 
-  if (!state.saveNotice) {
-    saveBtn.textContent = state.currentEntryId ? "この記録を更新する" : "この内容で保存する";
+  if (saveBtn) {
+    if (!state.saveNotice) {
+      saveBtn.textContent = state.currentEntryId ? "この記録を更新する" : "この内容で保存する";
+    }
+    saveBtn.classList.toggle("is-saved", Boolean(state.saveNotice));
+    saveBtn.onclick = saveCurrentRecord;
   }
-  saveBtn.classList.toggle("is-saved", Boolean(state.saveNotice));
-  saveBtn.onclick = saveCurrentRecord;
 }
 
 function renderMetricToggleWrap() {
   const wrap = document.getElementById("metricToggleWrap");
+  if (!wrap) return;
   wrap.innerHTML = "";
+
   getAllMetrics().forEach((metric) => {
     const btn = document.createElement("button");
     const active = state.visibleMetricIds.includes(metric.id);
@@ -723,7 +752,7 @@ function renderMetricToggleWrap() {
 
 function renderChart() {
   const canvas = document.getElementById("historyChart");
-  if (!canvas) return;
+  if (!canvas || typeof Chart === "undefined") return;
 
   const sorted = [...state.records].sort((a, b) =>
     `${a.date} ${a.clockTime || ""}`.localeCompare(`${b.date} ${b.clockTime || ""}`)
@@ -783,6 +812,7 @@ function renderChartSummary() {
   if (!summary) return;
 
   const visibleMetrics = getAllMetrics().filter((m) => state.visibleMetricIds.includes(m.id));
+
   summary.innerHTML =
     visibleMetrics
       .map((metric, index) => {
@@ -796,6 +826,8 @@ function renderChartSummary() {
 
 function renderWeeklySummary() {
   const card = document.getElementById("weeklySummaryCard");
+  if (!card) return;
+
   const sorted = [...state.records].sort((a, b) =>
     `${a.date} ${a.clockTime || ""}`.localeCompare(`${b.date} ${b.clockTime || ""}`)
   );
@@ -842,18 +874,20 @@ function renderWeeklySummary() {
 
 function renderBehaviorComparison() {
   const card = document.getElementById("behaviorComparisonCard");
+  if (!card) return;
+
   const outings = state.records.filter((r) => r.wentOut);
   const nonOutings = state.records.filter((r) => !r.wentOut);
 
   const rows = DEFAULT_METRICS
     .map(
       (metric) => `
-    <tr>
-      <td>${metric.label}</td>
-      <td style="text-align:center;">${averageFor(outings, metric.id)}</td>
-      <td style="text-align:center;">${averageFor(nonOutings, metric.id)}</td>
-    </tr>
-  `
+      <tr>
+        <td>${metric.label}</td>
+        <td style="text-align:center;">${averageFor(outings, metric.id)}</td>
+        <td style="text-align:center;">${averageFor(nonOutings, metric.id)}</td>
+      </tr>
+    `
     )
     .join("");
 
@@ -885,8 +919,9 @@ function renderBehaviorComparison() {
 
 function renderWeekdayAnalysis() {
   const wrap = document.getElementById("weekdayAnalysis");
-  const groups = {};
+  if (!wrap) return;
 
+  const groups = {};
   state.records.forEach((record) => {
     const key = weekdayJa(record.date);
     groups[key] = groups[key] || [];
@@ -894,7 +929,7 @@ function renderWeekdayAnalysis() {
   });
 
   const order = ["月", "火", "水", "木", "金", "土", "日"];
-  const rows = order
+  const html = order
     .filter((day) => groups[day]?.length)
     .map((day) => {
       const fatigue = averageFor(groups[day], "fatigue");
@@ -911,21 +946,21 @@ function renderWeekdayAnalysis() {
     })
     .join("");
 
-  wrap.innerHTML = rows || `<p class="empty-text">まだ分析できる記録がありません。</p>`;
+  wrap.innerHTML = html || `<p class="empty-text">まだ分析できる記録がありません。</p>`;
 }
 
 function renderTimeAnalysis() {
   const wrap = document.getElementById("timeAnalysis");
-  const buckets = { morning: [], afternoon: [], night: [] };
+  if (!wrap) return;
 
+  const buckets = { morning: [], afternoon: [], night: [] };
   state.records.forEach((record) => {
     const key = record.timeBucket || "morning";
     if (buckets[key]) buckets[key].push(record);
   });
 
   const labels = { morning: "朝", afternoon: "昼", night: "夜" };
-
-  const rows = Object.entries(labels)
+  const html = Object.entries(labels)
     .filter(([key]) => buckets[key].length)
     .map(([key, label]) => {
       const fatigue = averageFor(buckets[key], "fatigue");
@@ -942,13 +977,14 @@ function renderTimeAnalysis() {
     })
     .join("");
 
-  wrap.innerHTML = rows || `<p class="empty-text">時間帯の記録がまだありません。</p>`;
+  wrap.innerHTML = html || `<p class="empty-text">時間帯の記録がまだありません。</p>`;
 }
 
 function renderTagAnalysis() {
   const wrap = document.getElementById("tagAnalysis");
-  const tagMap = {};
+  if (!wrap) return;
 
+  const tagMap = {};
   state.records.forEach((record) => {
     (Array.isArray(record.tags) ? record.tags : []).forEach((tag) => {
       tagMap[tag] = tagMap[tag] || [];
@@ -982,6 +1018,8 @@ function renderTagAnalysis() {
 
 function renderCorrelationAnalysis() {
   const wrap = document.getElementById("correlationAnalysis");
+  if (!wrap) return;
+
   if (!state.customMetrics.length) {
     wrap.innerHTML = `<p class="empty-text">追加項目があると、基礎指標との動きの近さを見られます。</p>`;
     return;
@@ -994,28 +1032,39 @@ function renderCorrelationAnalysis() {
       const low = state.records.filter((r) => Number(r.scores?.[metric.id] || 0) <= 40);
 
       return `
-      <div class="analysis-row">
-        <div>
-          <div class="analysis-label">${metric.label}</div>
-          <div class="analysis-sub">高い記録 / 低い記録の関心平均</div>
+        <div class="analysis-row">
+          <div>
+            <div class="analysis-label">${metric.label}</div>
+            <div class="analysis-sub">高い記録 / 低い記録の関心平均</div>
+          </div>
+          <div class="analysis-sub">${high.length ? averageFor(high, "interest") : "-"} / ${low.length ? averageFor(low, "interest") : "-"}</div>
         </div>
-        <div class="analysis-sub">${high.length ? averageFor(high, "interest") : "-"} / ${low.length ? averageFor(low, "interest") : "-"}</div>
-      </div>
-    `;
+      `;
     })
     .join("");
 
-  wrap.innerHTML = `<div class="analysis-stack">${html}</div><p class="mini-note">左が追加項目が高い記録の関心平均、右が低い記録の関心平均です。厳密な統計ではなく、傾向を見るための簡易表示です。</p>`;
+  wrap.innerHTML = `
+    <div class="analysis-stack">${html}</div>
+    <p class="mini-note">左が追加項目が高い記録の関心平均、右が低い記録の関心平均です。厳密な統計ではなく、傾向を見るための簡易表示です。</p>
+  `;
 }
 
 function renderRecords() {
   const wrap = document.getElementById("recordsWrap");
+  if (!wrap) return;
+
   const sorted = [...state.records].sort((a, b) =>
     `${b.date} ${b.clockTime || ""}`.localeCompare(`${a.date} ${a.clockTime || ""}`)
   );
 
   if (!sorted.length) {
-    wrap.innerHTML = `<div class="card"><div class="card-content"><div class="empty-state">まだ記録がありません。入力タブから最初の1件を保存してください。</div></div></div>`;
+    wrap.innerHTML = `
+      <div class="card">
+        <div class="card-content">
+          <div class="empty-state">まだ記録がありません。入力タブから最初の1件を保存してください。</div>
+        </div>
+      </div>
+    `;
     return;
   }
 
@@ -1061,8 +1110,12 @@ function renderRecords() {
       </div>
     `;
 
-    card.querySelector(".record-main").addEventListener("click", () => loadRecordIntoForm(record));
-    card.querySelector(".delete-btn").addEventListener("click", () => deleteRecord(record.id));
+    const mainBtn = card.querySelector(".record-main");
+    const delBtn = card.querySelector(".delete-btn");
+
+    if (mainBtn) mainBtn.addEventListener("click", () => loadRecordIntoForm(record));
+    if (delBtn) delBtn.addEventListener("click", () => deleteRecord(record.id));
+
     wrap.appendChild(card);
   });
 }
@@ -1086,6 +1139,7 @@ function renderTagPresets() {
         state.tags = [...state.tags, tag];
         announceToScreenReader(`${tag}タグを追加しました`);
       }
+
       const tagsEl = document.getElementById("recordTags");
       if (tagsEl) tagsEl.value = state.tags.join(", ");
       renderTagPresets();
@@ -1129,7 +1183,8 @@ function renderCustomMetrics() {
       </div>
       <button class="btn btn-outline" type="button">削除</button>
     `;
-    row.querySelector("button").onclick = () => removeCustomMetric(metric.id);
+    const btn = row.querySelector("button");
+    if (btn) btn.onclick = () => removeCustomMetric(metric.id);
     wrap.appendChild(row);
   });
 }
@@ -1137,8 +1192,8 @@ function renderCustomMetrics() {
 function renderTagTemplateSettings() {
   const wrap = document.getElementById("tagTemplateWrap");
   if (!wrap) return;
-
   wrap.innerHTML = "";
+
   state.tagPresets.forEach((tag) => {
     const row = document.createElement("div");
     row.className = "tag-template-row";
@@ -1146,7 +1201,8 @@ function renderTagTemplateSettings() {
       <span class="badge badge-muted">#${escapeHtml(tag)}</span>
       <button type="button" class="btn btn-outline subtle-btn">削除</button>
     `;
-    row.querySelector("button").onclick = () => removeTagTemplate(tag);
+    const btn = row.querySelector("button");
+    if (btn) btn.onclick = () => removeTagTemplate(tag);
     wrap.appendChild(row);
   });
 }
@@ -1206,30 +1262,43 @@ function bindGlobal() {
     });
   });
 
-  document.getElementById("csvTopBtn").onclick = downloadCsv;
-  document.getElementById("csvBottomBtn").onclick = downloadCsv;
-  document.getElementById("jsonExportBtn").onclick = exportJson;
-
-  document.getElementById("jsonImportTriggerBtn").onclick = () => {
-    document.getElementById("jsonImportInput").click();
-  };
-
-  document.getElementById("jsonImportInput").onchange = (e) => {
-    const file = e.target.files?.[0];
-    if (file) importJson(file);
-    e.target.value = "";
-  };
-
-  document.getElementById("addMetricBtn").onclick = () => {
-    addCustomMetric(
-      document.getElementById("newMetricName").value,
-      document.getElementById("newMetricDescription").value
-    );
-    document.getElementById("newMetricName").value = "";
-    document.getElementById("newMetricDescription").value = "";
-  };
-
+  const csvTopBtn = document.getElementById("csvTopBtn");
+  const csvBottomBtn = document.getElementById("csvBottomBtn");
+  const jsonExportBtn = document.getElementById("jsonExportBtn");
+  const jsonImportTriggerBtn = document.getElementById("jsonImportTriggerBtn");
+  const jsonImportInput = document.getElementById("jsonImportInput");
+  const addMetricBtn = document.getElementById("addMetricBtn");
   const addTagTemplateBtn = document.getElementById("addTagTemplateBtn");
+
+  if (csvTopBtn) csvTopBtn.onclick = downloadCsv;
+  if (csvBottomBtn) csvBottomBtn.onclick = downloadCsv;
+  if (jsonExportBtn) jsonExportBtn.onclick = exportJson;
+
+  if (jsonImportTriggerBtn && jsonImportInput) {
+    jsonImportTriggerBtn.onclick = () => {
+      jsonImportInput.click();
+    };
+  }
+
+  if (jsonImportInput) {
+    jsonImportInput.onchange = (e) => {
+      const file = e.target.files?.[0];
+      if (file) importJson(file);
+      e.target.value = "";
+    };
+  }
+
+  if (addMetricBtn) {
+    addMetricBtn.onclick = () => {
+      addCustomMetric(
+        document.getElementById("newMetricName").value,
+        document.getElementById("newMetricDescription").value
+      );
+      document.getElementById("newMetricName").value = "";
+      document.getElementById("newMetricDescription").value = "";
+    };
+  }
+
   if (addTagTemplateBtn) {
     addTagTemplateBtn.onclick = () => {
       const input = document.getElementById("newTagTemplate");
@@ -1258,7 +1327,10 @@ function renderAll() {
   renderPresetMetrics();
   renderCustomMetrics();
   renderTagTemplateSettings();
-  if (state.activeTab === "graph") renderChart();
+
+  if (state.activeTab === "graph") {
+    renderChart();
+  }
 }
 
 function init() {

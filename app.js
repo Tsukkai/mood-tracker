@@ -9,7 +9,16 @@ const DEFAULT_METRICS = [
   { id: "heaviness", label: "気分の重さ", description: "沈みや圧迫感。高いほど重い。" }
 ];
 
-const DEFAULT_TAG_PRESETS = ["通院", "仕事", "休み", "人と会った", "雨", "睡眠不足", "外出", "家にいた"];
+const DEFAULT_TAG_PRESETS = [
+  "通院",
+  "仕事",
+  "休み",
+  "人と会った",
+  "雨",
+  "睡眠不足",
+  "外出",
+  "家にいた"
+];
 
 const PRESET_METRICS = [
   { label: "不安", description: "高いほど不安が強い。" },
@@ -19,8 +28,31 @@ const PRESET_METRICS = [
   { label: "孤独感", description: "高いほど孤独感が強い。" }
 ];
 
-const SERIES_COLORS = ["#b42318", "#1d4ed8", "#15803d", "#7e22ce", "#c2410c", "#0f766e", "#be185d", "#a16207", "#4338ca", "#0369a1"];
-const SERIES_STYLES = [[], [8, 4], [2, 3], [10, 3, 2, 3], [12, 5], [1, 4], [6, 2, 1, 2], [3, 2], [9, 3], [4, 4, 1, 4]];
+const SERIES_COLORS = [
+  "#b42318",
+  "#1d4ed8",
+  "#15803d",
+  "#7e22ce",
+  "#c2410c",
+  "#0f766e",
+  "#be185d",
+  "#a16207",
+  "#4338ca",
+  "#0369a1"
+];
+
+const SERIES_STYLES = [
+  [],
+  [8, 4],
+  [2, 3],
+  [10, 3, 2, 3],
+  [12, 5],
+  [1, 4],
+  [6, 2, 1, 2],
+  [3, 2],
+  [9, 3],
+  [4, 4, 1, 4]
+];
 
 let state = {
   records: [],
@@ -165,9 +197,10 @@ function loadState() {
     : [...DEFAULT_METRICS.map((m) => m.id), ...state.customMetrics.map((m) => m.id)];
 
   const savedTagPresets = safeParse(TAG_PRESETS_KEY, null);
-  state.tagPresets = Array.isArray(savedTagPresets) && savedTagPresets.length
-    ? savedTagPresets
-    : [...DEFAULT_TAG_PRESETS];
+  state.tagPresets =
+    Array.isArray(savedTagPresets) && savedTagPresets.length
+      ? savedTagPresets
+      : [...DEFAULT_TAG_PRESETS];
 
   resetForm();
 }
@@ -448,9 +481,10 @@ function importJson(file) {
       state.visibleMetricIds = Array.isArray(parsed.visibleMetricIds)
         ? parsed.visibleMetricIds
         : [...DEFAULT_METRICS.map((m) => m.id), ...state.customMetrics.map((m) => m.id)];
-      state.tagPresets = Array.isArray(parsed.tagPresets) && parsed.tagPresets.length
-        ? parsed.tagPresets
-        : [...DEFAULT_TAG_PRESETS];
+      state.tagPresets =
+        Array.isArray(parsed.tagPresets) && parsed.tagPresets.length
+          ? parsed.tagPresets
+          : [...DEFAULT_TAG_PRESETS];
 
       savePersistentState();
       resetForm();
@@ -613,7 +647,11 @@ function renderTopForm() {
   quickBtn.onclick = () => {
     state.quickMode = !state.quickMode;
     renderTopForm();
-    announceToScreenReader(state.quickMode ? "クイック入力をオンにしました" : "クイック入力をオフにしました");
+    announceToScreenReader(
+      state.quickMode
+        ? "クイック入力をオンにしました。記録状況とCBTメモを表示します。"
+        : "クイック入力をオフにしました。記録状況とCBTメモを隠します。"
+    );
   };
 
   if (timeBucketEl) {
@@ -629,8 +667,8 @@ function renderTopForm() {
     };
   }
 
-if (contextCard) contextCard.classList.toggle("is-hidden-quick", !state.quickMode);
-if (cbtCard) cbtCard.classList.toggle("is-hidden-quick", !state.quickMode);
+  if (contextCard) contextCard.classList.toggle("is-hidden-quick", !state.quickMode);
+  if (cbtCard) cbtCard.classList.toggle("is-hidden-quick", !state.quickMode);
 
   let quickNote = document.getElementById("quickNote");
   if (!quickNote) {
@@ -642,9 +680,9 @@ if (cbtCard) cbtCard.classList.toggle("is-hidden-quick", !state.quickMode);
     if (panel && scoreGrid) panel.insertBefore(quickNote, scoreGrid);
   }
 
-quickNote.textContent = state.quickMode
-  ? "クイック入力では、記録状況とCBTメモも含めて入力できます。"
-  : "通常入力では、CBTメモ以下を隠して簡潔に記録できます。";
+  quickNote.textContent = state.quickMode
+    ? "ONでは、記録状況とCBTメモも表示して詳しく入力できます。"
+    : "OFFでは、記録状況とCBTメモを隠して簡潔に記録できます。";
 
   if (!state.saveNotice) {
     saveBtn.textContent = state.currentEntryId ? "この記録を更新する" : "この内容で保存する";
